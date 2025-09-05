@@ -1,0 +1,39 @@
+{
+  "name": "eclipserunner",
+  "version": "1.0.0",
+  "description": "SMS-driven automation for Philadelphia eCLIPSE contractor portal",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc",
+    "dev:server": "tsx watch src/server.ts",
+    "dev:worker": "tsx watch src/worker.ts",
+    "start:server": "node dist/server.js",
+    "start:worker": "node dist/worker.js",
+    "playwright:install": "playwright install chromium",
+    "test": "echo \"No tests yet\" && exit 0"
+  },
+  "keywords": ["sms", "rpa", "playwright", "philadelphia", "eclipse", "contractor"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.18.2",
+    "twilio": "^4.19.0",
+    "bullmq": "^4.15.0",
+    "ioredis": "^5.3.2",
+    "playwright": "^1.40.0",
+    "zod": "^3.22.4",
+    "dotenv": "^16.3.1",
+    "pino": "^8.17.0",
+    "pino-pretty": "^10.3.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
