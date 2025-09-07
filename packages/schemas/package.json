@@ -1,0 +1,10 @@
+{
+  "name": "@wheelpath/schemas",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./rfi.schema.json": "./rfi.schema.json",
+    "./README.md": "./README.md"
+  }
+}

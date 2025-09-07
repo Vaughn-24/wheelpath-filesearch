@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+.DS_Store
+.env*
+!.env.example
+.husky/_/
+package-lock.json
+**/*.local.*
+
+
+
