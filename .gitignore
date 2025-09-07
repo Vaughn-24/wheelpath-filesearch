@@ -7,7 +7,6 @@ coverage/
 .env*
 !.env.example
 .husky/_/
-package-lock.json
 **/*.local.*
 
 
