@@ -360,4 +360,37 @@ gcloud builds submit --config=cloudbuild.web.yaml .
 
 ---
 
+---
+
+## 🔐 Developer Access & Secrets
+
+### Where Secrets Are Stored
+| Secret | Location |
+|--------|----------|
+| `GEMINI_API_KEY` | Cloud Run env var / GCP Secret Manager |
+| `ADMIN_API_KEY` | Cloud Run env var / GCP Secret Manager |
+| Firebase Config | Cloud Run build args |
+
+### Access Admin Metrics
+```bash
+# Get your admin key from GCP Console or team lead
+curl -H "x-admin-key: YOUR_ADMIN_KEY" \
+  https://wheelpath-api-945257727887.us-central1.run.app/admin/metrics
+```
+
+### View Secrets in GCP
+```bash
+# List Cloud Run env vars
+gcloud run services describe wheelpath-api --region=us-central1 --format='yaml(spec.template.spec.containers[0].env)'
+
+# Or use Secret Manager (if migrated)
+gcloud secrets list
+gcloud secrets versions access latest --secret=ADMIN_API_KEY
+```
+
+### Local Development
+Copy `.env.example` to `.env` and fill in values from GCP or team lead.
+
+---
+
 *Last Updated: November 26, 2025*
