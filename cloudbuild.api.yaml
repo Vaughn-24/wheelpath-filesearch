@@ -41,7 +41,7 @@ steps:
       - '--max-instances'
       - '10'
       - '--set-env-vars'
-      - 'GCP_PROJECT=wheelpath-ai-dev,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy'
+      - 'GCP_PROJECT=wheelpath-ai-dev,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog'
 
 images:
   - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
