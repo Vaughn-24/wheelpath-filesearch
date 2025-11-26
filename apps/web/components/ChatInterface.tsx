@@ -181,9 +181,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
   const buttonEnabled = !streaming && !loading;
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-2rem)] gap-4 lg:gap-6 p-4 lg:p-6 bg-gray-50 overflow-hidden">
+    <div className="flex flex-col lg:flex-row h-full min-h-[600px] gap-4 lg:gap-6 p-4 lg:p-6 bg-gray-50 overflow-hidden">
       {/* PDF Viewer / Citation Source (Top on mobile, Left on desktop) */}
-      <div className="w-full lg:w-1/2 h-[40vh] lg:h-full bento-card p-0 flex flex-col overflow-hidden relative border-0 order-1 lg:order-1">
+      <div className="w-full lg:w-1/2 h-[250px] lg:h-auto lg:flex-1 bento-card p-0 flex flex-col overflow-hidden relative border-0 order-1 lg:order-1">
         {activePdfUrl ? (
           <iframe 
             src={`${activePdfUrl}#page=${page}`} 
@@ -204,7 +204,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
       </div>
 
       {/* Chat (Bottom on mobile, Right on desktop) */}
-      <div className="w-full lg:w-1/2 flex-1 lg:h-full flex flex-col bento-card overflow-hidden p-0 order-2 lg:order-2 min-h-[50vh] lg:min-h-0">
+      <div className="w-full lg:w-1/2 flex-1 flex flex-col bento-card overflow-hidden p-0 order-2 lg:order-2 min-h-[300px] lg:min-h-0">
         <div className="bg-white p-4 lg:p-6 border-b border-gray-100 flex justify-between items-center">
           <h2 className="font-medium text-gray-900 truncate pr-2 lg:pr-4 text-sm lg:text-base">
             {activeTitle || 'Notebook Chat'}
