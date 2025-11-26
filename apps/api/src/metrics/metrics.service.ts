@@ -76,8 +76,8 @@ export class MetricsService {
     // Store aggregated daily stats in Firestore (for admin dashboard)
     try {
       await this.incrementDailyStats(event, cost);
-    } catch (error) {
-      this.logger.warn(`Failed to store metrics: ${error.message}`);
+    } catch (error: any) {
+      this.logger.warn(`Failed to store metrics: ${error?.message || error}`);
     }
   }
 
