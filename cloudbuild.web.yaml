@@ -1,0 +1,26 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args: 
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web'
+      - '-f'
+      - 'Dockerfile.web'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_API_URL=https://wheelpath-api-945257727887.us-central1.run.app'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_PROJECT_ID=wheelpath-ai-dev'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=wheelpath-ai-dev.firebaseapp.com'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=wheelpath-ai-dev.firebasestorage.app'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyDtl8gVotFkz_cI98wFLN-Yfs-jx7Lj378'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=945257727887'
+      - '--build-arg'
+      - 'NEXT_PUBLIC_FIREBASE_APP_ID=1:945257727887:web:6fc1cb1d06652d8d7d2dfa'
+      - '.'
+images:
+  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web'
+

@@ -1,0 +1,50 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY tsconfig.base.json ./
+
+COPY apps/api/package.json ./apps/api/
+COPY packages/schemas/package.json ./packages/schemas/
+COPY packages/validation/package.json ./packages/validation/
+COPY packages/types/package.json ./packages/types/
+COPY packages/shared/package.json ./packages/shared/
+
+RUN npm install
+
+COPY apps/api ./apps/api
+COPY packages/schemas ./packages/schemas
+COPY packages/validation ./packages/validation
+COPY packages/types ./packages/types
+COPY packages/shared ./packages/shared
+
+WORKDIR /app/packages/schemas
+RUN npm run build
+
+WORKDIR /app/packages/types
+RUN npm run build
+
+WORKDIR /app/packages/validation
+RUN npm run build
+
+WORKDIR /app/packages/shared
+RUN npm run build
+
+WORKDIR /app/apps/api
+RUN npm run build
+
+# --- Production Stage ---
+FROM node:20-alpine AS runner
+WORKDIR /app
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/apps/api/dist ./apps/api/dist
+COPY --from=builder /app/apps/api/package.json ./apps/api/
+COPY --from=builder /app/packages ./packages
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+CMD ["node", "apps/api/dist/src/main.js"]

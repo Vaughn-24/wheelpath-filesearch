@@ -1,8 +1,24 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "module": "ES2022",
-    "outDir": "dist"
+    "outDir": "dist",
+    "target": "ES2022",
+    "strict": false,
+    "noImplicitAny": false,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "incremental": true,
+    "types": ["node"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
   },
   "include": ["src"]
 }

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.wheelpath.ai/rfi.schema.json",
+  "title": "RequestForInformation",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "tenantId": { "type": "string", "minLength": 1 },
+    "projectId": { "type": "string", "minLength": 1 },
+    "docType": { "const": "rfi" },
+    "docNumber": { "type": "string", "minLength": 1 },
+    "title": { "type": "string", "minLength": 1 },
+    "question": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": [
+        "draft",
+        "submitted",
+        "awaitingAnswer",
+        "answeredPendingReview",
+        "closed",
+        "void"
+      ]
+    },
+    "dueDate": { "type": "string", "format": "date" },
+    "ballInCourtPersonId": { "type": "string" },
+    "officialAnswer": { "type": "string" },
+    "answerByPersonId": { "type": "string" },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "extras": {
+      "type": "object",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" },
+          { "type": "null" }
+        ]
+      }
+    }
+  },
+  "required": [
+    "tenantId",
+    "projectId",
+    "docType",
+    "docNumber",
+    "title",
+    "question",
+    "status"
+  ]
+}
+
+
