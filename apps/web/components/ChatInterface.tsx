@@ -259,6 +259,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
             <input 
               value={input}
               onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
               placeholder={loading ? "Connecting..." : "Message WheelPath..."}
               className="w-full bg-gray-50 border-none rounded-full py-3.5 pl-5 pr-12 text-sm focus:ring-1 focus:ring-black transition-all disabled:opacity-50"
               disabled={!inputEnabled}
@@ -266,6 +267,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
             <button 
               type="submit"
               disabled={!buttonEnabled}
+              onClick={(e) => { e.preventDefault(); handleSubmit(e as any); }}
               className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 bg-white rounded-full shadow-sm hover:bg-gray-100 disabled:opacity-50 transition-colors"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-black">
