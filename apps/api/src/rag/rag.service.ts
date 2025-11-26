@@ -20,7 +20,7 @@ export class RagService {
 
   constructor() {
     this.vertexAI = new VertexAI({ project: this.project, location: this.location });
-    this.model = this.vertexAI.getGenerativeModel({ model: 'gemini-1.5-pro' }) as any;
+    this.model = this.vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' }) as any;
     
     // Use PredictionServiceClient for embeddings
     this.predictionClient = new aiplatform.v1.PredictionServiceClient({
