@@ -23,8 +23,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
   const [page, setPage] = useState(1);
   const [activePdfUrl, setActivePdfUrl] = useState<string | undefined>(signedUrl);
   const [activeTitle, setActiveTitle] = useState<string | undefined>(documentTitle);
+  const [chatError, setChatError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const { user } = useAuth();
+  const { user, loading, signInWithGoogle } = useAuth();
 
   useEffect(() => {
     if (signedUrl) setActivePdfUrl(signedUrl);
@@ -59,8 +60,16 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || !user) return;
+    if (!input.trim()) return;
+    
+    // If no user, prompt sign-in
+    if (!user) {
+      setChatError('Please sign in to chat');
+      signInWithGoogle();
+      return;
+    }
 
+    setChatError(null);
     const userMsg: Message = { role: 'user', content: input, createdAt: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
@@ -69,6 +78,8 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
     try {
         const token = await user.getIdToken();
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+        console.log('Sending chat request to:', `${apiUrl}/chat/stream`);
+        
         const res = await fetch(`${apiUrl}/chat/stream`, {
             method: 'POST',
             headers: { 
@@ -81,6 +92,12 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
                 history: messages 
             })
         });
+
+        if (!res.ok) {
+            const errorText = await res.text();
+            console.error('Chat API error:', res.status, errorText);
+            throw new Error(`API error: ${res.status}`);
+        }
 
         if (!res.body) throw new Error('No response body');
 
@@ -116,9 +133,10 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
                 }
             }
         }
-    } catch (err) {
-        console.error(err);
-        setMessages(prev => [...prev, { role: 'model', content: 'Error generating response.', createdAt: new Date().toISOString() }]);
+    } catch (err: any) {
+        console.error('Chat error:', err);
+        setChatError(err.message || 'Failed to send message');
+        setMessages(prev => [...prev, { role: 'model', content: 'Error generating response. Please try again.', createdAt: new Date().toISOString() }]);
     } finally {
         setStreaming(false);
     }
@@ -180,10 +198,29 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
         </div>
         
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-white">
+            {chatError && (
+                <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-red-700 text-sm">
+                    {chatError}
+                </div>
+            )}
             {messages.length === 0 && (
                 <div className="h-full flex flex-col items-center justify-center text-gray-400 space-y-2">
                     <div className="w-12 h-12 bg-gray-50 rounded-xl flex items-center justify-center text-xl">✨</div>
-                    <p>Ask a question to start.</p>
+                    {loading ? (
+                        <p>Connecting...</p>
+                    ) : !user ? (
+                        <div className="text-center space-y-2">
+                            <p>Sign in to start chatting</p>
+                            <button
+                                onClick={signInWithGoogle}
+                                className="bg-black text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-gray-800 transition-colors"
+                            >
+                                Sign in with Google
+                            </button>
+                        </div>
+                    ) : (
+                        <p>Ask a question to start.</p>
+                    )}
                 </div>
             )}
             {messages.map((msg, i) => (

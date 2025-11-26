@@ -6,11 +6,15 @@ import { useAuth } from '../lib/auth';
 import { Document } from '@wheelpath/schemas';
 
 export default function Home() {
-  const { user } = useAuth();
+  const { user, loading, error, signInWithGoogle } = useAuth();
   const [selectedDoc, setSelectedDoc] = useState<(Document & { signedUrl?: string }) | null>(null);
 
   const handleChatAll = () => {
-    if (!user) return;
+    if (!user) {
+      // If not authenticated, trigger Google sign-in
+      signInWithGoogle();
+      return;
+    }
     setSelectedDoc({
         id: 'all',
         title: 'All Documents',
@@ -27,7 +31,10 @@ export default function Home() {
   };
 
   const handleSelect = async (doc: Document) => {
-    if (!user) return;
+    if (!user) {
+      signInWithGoogle();
+      return;
+    }
     setSelectedDoc({ ...doc }); // Show immediately while fetching details
 
     try {
@@ -59,11 +66,41 @@ export default function Home() {
             <p className="text-gray-500 mt-1">Your knowledge base, grounded in truth.</p>
           </div>
           <div className="flex items-center gap-4">
-             <div className="h-10 w-10 rounded-full bg-gray-200 flex items-center justify-center text-gray-500 font-medium">
-                U
-             </div>
+            {loading ? (
+              <div className="text-sm text-gray-400">Loading...</div>
+            ) : user ? (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">{user.email || 'Anonymous'}</span>
+                <div className="h-10 w-10 rounded-full bg-black flex items-center justify-center text-white font-medium">
+                  {user.email ? user.email[0].toUpperCase() : 'A'}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={signInWithGoogle}
+                className="bg-black text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-gray-800 transition-colors"
+              >
+                Sign in with Google
+              </button>
+            )}
           </div>
         </header>
+
+        {/* Auth Error Banner */}
+        {error && (
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-amber-600">⚠️</span>
+              <span className="text-amber-800 text-sm">{error}</span>
+            </div>
+            <button
+              onClick={signInWithGoogle}
+              className="bg-amber-600 text-white px-4 py-1.5 rounded-full text-sm font-medium hover:bg-amber-700 transition-colors"
+            >
+              Sign in with Google
+            </button>
+          </div>
+        )}
         
         {/* Bento Grid */}
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -80,7 +117,7 @@ export default function Home() {
                     onClick={handleChatAll}
                     className="bg-white text-black px-5 py-2.5 rounded-full font-medium hover:bg-gray-100 transition-colors flex items-center gap-2 text-sm"
                 >
-                    <span>Start Notebook Chat</span>
+                    <span>{user ? 'Start Notebook Chat' : 'Sign in to Chat'}</span>
                     <span>→</span>
                 </button>
              </div>
