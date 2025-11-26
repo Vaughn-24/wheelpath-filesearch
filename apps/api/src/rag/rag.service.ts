@@ -22,8 +22,9 @@ export class RagService {
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
-      this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro' });
-      console.log('Initialized Gemini with Google AI API (gemini-pro)');
+      // Use gemini-2.0-flash as specified in config
+      this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
+      console.log('Initialized Gemini with Google AI API (gemini-2.0-flash-exp)');
     } else {
       console.warn('GEMINI_API_KEY not set - chat will use fallback responses');
     }
