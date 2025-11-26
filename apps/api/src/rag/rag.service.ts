@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as aiplatform from '@google-cloud/aiplatform';
 import * as admin from 'firebase-admin';
 import { Message } from '@wheelpath/schemas';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class RagService {
@@ -17,7 +18,7 @@ export class RagService {
   private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;
   private publicEndpointDomain = process.env.VERTEX_PUBLIC_ENDPOINT_DOMAIN;
 
-  constructor() {
+  constructor(private readonly metricsService: MetricsService) {
     // Use Google AI API with GEMINI_API_KEY
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
@@ -204,6 +205,20 @@ Be helpful, professional, and concise.`;
     const chat = this.model.startChat({ history: chatHistory });
 
     const result = await chat.sendMessageStream(query);
+
+    // Track usage metrics (non-blocking)
+    this.metricsService.track({
+      type: 'chat_query',
+      tenantId,
+      documentId: documentId === 'all' ? undefined : documentId,
+      metadata: {
+        embeddingChars: query.length,
+        vectorNeighbors: chunksData.length,
+        // Note: Token counts would require response inspection
+        // which we can't do with streaming without buffering
+      }
+    }).catch(err => console.warn('Metrics tracking failed:', err.message));
+
     return {
         stream: result.stream,
         citations: chunksData
