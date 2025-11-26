@@ -145,7 +145,7 @@ export default function Home() {
 
           {/* 4. Chat Interface (Global) */}
           <div className="lg:col-span-12 mt-6" id="chat-view">
-            <div className="bento-card bg-white border border-gray-200 shadow-sm min-h-[600px] p-0 overflow-hidden">
+            <div className="bento-card bg-white border border-gray-200 shadow-sm h-[600px] lg:h-[700px] p-0 overflow-hidden">
                 <ChatInterface 
                     documentId={selectedDoc?.id} 
                     documentTitle={selectedDoc?.title}
