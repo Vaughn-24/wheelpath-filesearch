@@ -1,5 +1,51 @@
 steps:
+  # Build the API image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['build', '-t', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api', '-f', 'Dockerfile.api', '.']
+    args:
+      - 'build'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest'
+      - '-f'
+      - 'Dockerfile.api'
+      - '.'
+
+  # Push the image
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'wheelpath-api'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '1Gi'
+      - '--cpu'
+      - '1'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'GCP_PROJECT=wheelpath-ai-dev,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-uploads-dev,NODE_ENV=production'
+
 images:
-  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api'
+  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY

@@ -1,9 +1,12 @@
 steps:
+  # Build the Web image
   - name: 'gcr.io/cloud-builders/docker'
     args: 
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:$COMMIT_SHA'
+      - '-t'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:latest'
       - '-f'
       - 'Dockerfile.web'
       - '--build-arg'
@@ -21,6 +24,42 @@ steps:
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_APP_ID=1:945257727887:web:6fc1cb1d06652d8d7d2dfa'
       - '.'
-images:
-  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web'
 
+  # Push images
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:$COMMIT_SHA']
+
+  - name: 'gcr.io/cloud-builders/docker'
+    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:latest']
+
+  # Deploy to Cloud Run
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: 'gcloud'
+    args:
+      - 'run'
+      - 'deploy'
+      - 'wheelpath-web'
+      - '--image'
+      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:$COMMIT_SHA'
+      - '--region'
+      - 'us-central1'
+      - '--platform'
+      - 'managed'
+      - '--allow-unauthenticated'
+      - '--memory'
+      - '512Mi'
+      - '--cpu'
+      - '1'
+      - '--min-instances'
+      - '0'
+      - '--max-instances'
+      - '10'
+      - '--set-env-vars'
+      - 'NODE_ENV=production'
+
+images:
+  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-web:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
