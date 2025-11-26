@@ -57,10 +57,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
     }
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const sendMessage = async () => {
     const inputValue = inputRef.current?.value || '';
-    console.log('handleSubmit called, input:', inputValue, 'user:', user?.uid);
+    console.log('sendMessage called, input:', inputValue, 'user:', user?.uid);
     
     if (!inputValue.trim()) {
       console.log('Empty input, returning');
@@ -256,25 +255,30 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
         </div>
 
         <div className="p-4 bg-white border-t border-gray-100">
-          <form onSubmit={handleSubmit} className="relative">
+          <div className="relative">
             <input 
               ref={inputRef}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
+              onKeyDown={e => { 
+                if (e.key === 'Enter' && !e.shiftKey) { 
+                  e.preventDefault(); 
+                  sendMessage(); 
+                } 
+              }}
               placeholder={loading ? "Connecting..." : "Message WheelPath..."}
               className="w-full bg-gray-50 border-none rounded-full py-3.5 pl-5 pr-12 text-sm focus:ring-1 focus:ring-black transition-all disabled:opacity-50"
               disabled={!inputEnabled}
             />
             <button 
-              type="submit"
+              type="button"
               disabled={!buttonEnabled}
-              onClick={(e) => { e.preventDefault(); handleSubmit(e as any); }}
+              onClick={sendMessage}
               className="absolute right-2 top-1/2 transform -translate-y-1/2 p-1.5 bg-white rounded-full shadow-sm hover:bg-gray-100 disabled:opacity-50 transition-colors"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-black">
                 <path d="M5 12h14M12 5l7 7-7 7"/>
               </svg>
             </button>
-          </form>
+          </div>
         </div>
       </div>
     </div>
