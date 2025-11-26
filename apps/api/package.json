@@ -12,6 +12,7 @@
     "seed": "ts-node src/scripts/seed.ts"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.21.0",
     "@google-cloud/aiplatform": "^5.13.0",
     "@google-cloud/storage": "^7.17.3",
     "@google-cloud/vertexai": "^1.10.0",

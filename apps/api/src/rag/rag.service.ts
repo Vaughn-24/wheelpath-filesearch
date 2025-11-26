@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { VertexAI } from '@google-cloud/vertexai';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import * as aiplatform from '@google-cloud/aiplatform';
 import * as admin from 'firebase-admin';
 import { Message } from '@wheelpath/schemas';
 
 @Injectable()
 export class RagService {
-  private vertexAI: VertexAI;
+  private genAI: GoogleGenerativeAI | null = null;
   private model: any;
   private predictionClient: aiplatform.v1.PredictionServiceClient;
   private firestore: admin.firestore.Firestore;
@@ -15,14 +15,20 @@ export class RagService {
   private location = process.env.GCP_LOCATION || 'us-central1';
   private indexEndpointId = process.env.VERTEX_INDEX_ENDPOINT_ID;
   private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;
-  // Public endpoint domain for Vector Search
   private publicEndpointDomain = process.env.VERTEX_PUBLIC_ENDPOINT_DOMAIN;
 
   constructor() {
-    this.vertexAI = new VertexAI({ project: this.project, location: this.location });
-    this.model = this.vertexAI.getGenerativeModel({ model: 'gemini-1.5-flash-001' }) as any;
+    // Use Google AI API with GEMINI_API_KEY
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      this.model = this.genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+      console.log('Initialized Gemini with Google AI API');
+    } else {
+      console.warn('GEMINI_API_KEY not set - chat will use fallback responses');
+    }
     
-    // Use PredictionServiceClient for embeddings
+    // Use PredictionServiceClient for embeddings (still via Vertex AI)
     this.predictionClient = new aiplatform.v1.PredictionServiceClient({
         apiEndpoint: `${this.location}-aiplatform.googleapis.com`
     });
@@ -35,7 +41,6 @@ export class RagService {
   }
 
   private async findNeighborsViaPublicEndpoint(embedding: number[], filter: any): Promise<any[]> {
-    // Use public endpoint REST API for Vector Search
     const url = `https://${this.publicEndpointDomain}/v1/projects/${this.project}/locations/${this.location}/indexEndpoints/${this.indexEndpointId}:findNeighbors`;
     
     const { GoogleAuth } = require('google-auth-library');
@@ -81,7 +86,6 @@ export class RagService {
     const hasVectorSearch = this.indexEndpointId && this.deployedIndexId && this.publicEndpointDomain;
     
     if (hasVectorSearch) {
-        // 0. Prepare Filter
         if (documentId === 'all') {
             const docsSnapshot = await this.firestore.collection('documents')
                 .where('tenantId', '==', tenantId)
@@ -90,15 +94,12 @@ export class RagService {
             const docIds = docsSnapshot.docs.map(d => d.id);
             if (docIds.length > 0) {
                 filter = { namespace: 'documentId', allowList: docIds };
-            } else {
-                // No docs, empty result - but still respond helpfully
-                console.log('No documents found for tenant, proceeding without context');
             }
         } else {
             filter = { namespace: 'documentId', allowList: [documentId] };
         }
 
-        // 1. Embed Query using text-embedding-004 (768 dimensions)
+        // Embed Query using text-embedding-004
         const EXPECTED_EMBEDDING_DIM = 768;
         let embedding: number[];
         try {
@@ -124,97 +125,77 @@ export class RagService {
             
             embedding = embeddingValue.map((v: any) => v.numberValue || 0);
             
-            // Validate dimension
             if (embedding && embedding.length !== EXPECTED_EMBEDDING_DIM) {
                 console.warn(`Query embedding: Expected ${EXPECTED_EMBEDDING_DIM} dimensions, got ${embedding.length}`);
             }
         } catch (error: any) {
             console.error('Embedding failed:', error);
-            throw new Error('Failed to generate query embedding');
+            // Continue without vector search
+            embedding = [];
         }
         
-        if (!embedding || embedding.length === 0 || !Array.isArray(embedding)) {
-            throw new Error('Invalid embedding format returned');
-        }
-
-        // 2. Vector Search via Public Endpoint
-        try {
-            const neighbors = await this.findNeighborsViaPublicEndpoint(embedding, filter);
-            
-            // 3. Fetch Chunks from Firestore
-            // IDs are stored as `${documentId}_${chunkIndex}`
-            const chunkRefs = neighbors.map((n: any) => {
-                if (!n.datapoint?.datapointId) return null;
-                const parts = n.datapoint.datapointId.split('_');
-                const chunkIndex = parts[parts.length - 1];
-                // Extract documentId correctly (it might contain underscores if we allowed it, but UUIDs don't)
-                const docIdFromVector = parts.slice(0, -1).join('_');
+        if (embedding && embedding.length > 0) {
+            try {
+                const neighbors = await this.findNeighborsViaPublicEndpoint(embedding, filter);
                 
-                return this.firestore.collection('documents').doc(docIdFromVector).collection('chunks').doc(chunkIndex);
-            }).filter(Boolean) as admin.firestore.DocumentReference[];
+                const chunkRefs = neighbors.map((n: any) => {
+                    if (!n.datapoint?.datapointId) return null;
+                    const parts = n.datapoint.datapointId.split('_');
+                    const chunkIndex = parts[parts.length - 1];
+                    const docIdFromVector = parts.slice(0, -1).join('_');
+                    return this.firestore.collection('documents').doc(docIdFromVector).collection('chunks').doc(chunkIndex);
+                }).filter(Boolean) as admin.firestore.DocumentReference[];
 
-            if (chunkRefs.length > 0) {
-                 const chunkSnaps = await this.firestore.getAll(...chunkRefs);
-                 chunksData = chunkSnaps.map((snap, index) => {
-                    const data = snap.data();
-                    const docId = snap.ref.parent.parent?.id;
-                    return {
-                        id: snap.id,
-                        index: index + 1,
-                        text: data?.text || '',
-                        pageNumber: data?.pageNumber || 1,
-                        documentId: docId
-                    };
-                 });
+                if (chunkRefs.length > 0) {
+                    const chunkSnaps = await this.firestore.getAll(...chunkRefs);
+                    chunksData = chunkSnaps.map((snap, index) => {
+                        const data = snap.data();
+                        const docId = snap.ref.parent.parent?.id;
+                        return {
+                            id: snap.id,
+                            index: index + 1,
+                            text: data?.text || '',
+                            pageNumber: data?.pageNumber || 1,
+                            documentId: docId
+                        };
+                    });
+                }
+            } catch (vectorError: any) {
+                console.error('Vector search failed:', vectorError.message);
             }
-        } catch (vectorError: any) {
-            console.error('Vector search failed, continuing without context:', vectorError.message);
-            // Continue without vector search results
-        }
-    } else {
-        // Fallback for local dev without Vertex AI set up
-        console.warn("Vector search not configured, using fallback retrieval");
-        if (documentId && documentId !== 'all') {
-            const chunksSnapshot = await this.firestore
-                .collection('documents')
-                .doc(documentId)
-                .collection('chunks')
-                .limit(5)
-                .get();
-                
-            chunksData = chunksSnapshot.docs.map((d, index) => ({
-                id: d.id,
-                index: index + 1,
-                text: d.data().text,
-                pageNumber: d.data().pageNumber || 1
-            }));
         }
     }
       
     const context = chunksData.length > 0 
         ? chunksData.map(c => `[${c.index}] (Page ${c.pageNumber}): ${c.text}`).join('\n\n')
-        : 'No documents available. Please upload documents to get grounded answers.';
+        : '';
     
-    // 4. Construct Prompt
     const systemPrompt = chunksData.length > 0 
         ? `You are a helpful assistant. Use the following CONTEXT to answer the user's question.
-Always cite your sources strictly using the format [1], [2], etc. which corresponds to the context chunks provided.
+Always cite your sources using the format [1], [2], etc. corresponding to the context chunks.
 Do not invent citations. If the answer is not in the context, say you don't know.
 
 CONTEXT:
-${context}
-`
+${context}`
         : `You are WheelPath AI, a helpful assistant for construction project management. 
-The user hasn't uploaded any documents yet. You can still help with general questions, but encourage them to upload relevant documents for more specific, grounded answers.
+The user hasn't uploaded any documents yet. Help with general questions and encourage them to upload documents for grounded answers.
 Be helpful, professional, and concise.`;
 
-    // 5. Call Gemini
+    // Use Google AI API for chat
+    if (!this.model) {
+        // Fallback response if no API key
+        const fallbackStream = (async function*() {
+            yield { candidates: [{ content: { parts: [{ text: "I'm WheelPath AI. The AI service is currently being configured. Please try again shortly or upload documents to get started." }] } }] };
+        })();
+        return { stream: fallbackStream, citations: chunksData };
+    }
+
     const chat = this.model.startChat({
       history: history.map(msg => ({
-        role: msg.role,
+        role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }]
       })),
-      systemInstruction: { parts: [{ text: systemPrompt }] }
+      systemInstruction: systemPrompt
     });
 
     const result = await chat.sendMessageStream(query);
