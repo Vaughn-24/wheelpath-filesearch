@@ -190,13 +190,17 @@ Be helpful, professional, and concise.`;
         return { stream: fallbackStream, citations: chunksData };
     }
 
-    const chat = this.model.startChat({
-      history: history.map(msg => ({
+    // Prepend system prompt to history as a model message
+    const chatHistory = [
+      { role: 'user', parts: [{ text: 'System context: ' + systemPrompt }] },
+      { role: 'model', parts: [{ text: 'Understood. I will follow these instructions.' }] },
+      ...history.map(msg => ({
         role: msg.role === 'user' ? 'user' : 'model',
         parts: [{ text: msg.content }]
-      })),
-      systemInstruction: systemPrompt
-    });
+      }))
+    ];
+    
+    const chat = this.model.startChat({ history: chatHistory });
 
     const result = await chat.sendMessageStream(query);
     return {
