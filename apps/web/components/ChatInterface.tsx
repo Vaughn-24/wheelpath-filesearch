@@ -181,9 +181,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
   const buttonEnabled = !streaming && !loading;
 
   return (
-    <div className="flex flex-col md:flex-row h-full min-h-[600px] gap-4 md:gap-6 p-4 md:p-6 bg-gray-50 overflow-hidden">
+    <div className="grid grid-cols-1 md:grid-cols-2 h-full min-h-[600px] gap-4 md:gap-6 p-4 md:p-6 bg-gray-50 overflow-hidden">
       {/* PDF Viewer / Citation Source (Top on mobile, Left on desktop) */}
-      <div className="w-full md:w-1/2 h-[250px] md:h-auto md:flex-1 bento-card p-0 flex flex-col overflow-hidden relative border-0 order-1 md:order-1">
+      <div className="h-[250px] md:h-full bento-card p-0 flex flex-col overflow-hidden relative border-0">
         {activePdfUrl ? (
           <iframe 
             src={`${activePdfUrl}#page=${page}`} 
@@ -204,7 +204,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
       </div>
 
       {/* Chat (Bottom on mobile, Right on desktop) */}
-      <div className="w-full md:w-1/2 flex-1 flex flex-col bento-card overflow-hidden p-0 order-2 md:order-2 min-h-[300px] md:min-h-0">
+      <div className="flex flex-col bento-card overflow-hidden p-0 min-h-[300px] md:min-h-0">
         <div className="bg-white p-4 md:p-6 border-b border-gray-100 flex justify-between items-center">
           <h2 className="font-medium text-gray-900 truncate pr-2 md:pr-4 text-sm md:text-base">
             {activeTitle || 'Notebook Chat'}
