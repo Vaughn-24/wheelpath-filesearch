@@ -17,8 +17,8 @@ interface Citation {
 
 export default function ChatInterface({ documentId, documentTitle, signedUrl }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [page, setPage] = useState(1);
   const [activePdfUrl, setActivePdfUrl] = useState<string | undefined>(signedUrl);
@@ -59,9 +59,10 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('handleSubmit called, input:', input, 'user:', user?.uid);
+    const inputValue = inputRef.current?.value || '';
+    console.log('handleSubmit called, input:', inputValue, 'user:', user?.uid);
     
-    if (!input.trim()) {
+    if (!inputValue.trim()) {
       console.log('Empty input, returning');
       return;
     }
@@ -73,9 +74,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
     }
 
     setChatError(null);
-    const userMsg: Message = { role: 'user', content: input, createdAt: new Date().toISOString() };
+    const userMsg: Message = { role: 'user', content: inputValue, createdAt: new Date().toISOString() };
     setMessages(prev => [...prev, userMsg]);
-    setInput('');
+    if (inputRef.current) inputRef.current.value = '';
     setStreaming(true);
 
     try {
@@ -178,7 +179,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
 
   // Determine if input should be enabled
   const inputEnabled = !streaming && !loading;
-  const buttonEnabled = !streaming && input.trim().length > 0 && !loading;
+  const buttonEnabled = !streaming && !loading;
 
   return (
     <div className="flex h-[calc(100vh-2rem)] gap-6 p-4 lg:p-6 bg-gray-50 overflow-hidden">
@@ -257,8 +258,7 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
         <div className="p-4 bg-white border-t border-gray-100">
           <form onSubmit={handleSubmit} className="relative">
             <input 
-              value={input}
-              onChange={e => setInput(e.target.value)}
+              ref={inputRef}
               onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e as any); } }}
               placeholder={loading ? "Connecting..." : "Message WheelPath..."}
               className="w-full bg-gray-50 border-none rounded-full py-3.5 pl-5 pr-12 text-sm focus:ring-1 focus:ring-black transition-all disabled:opacity-50"
