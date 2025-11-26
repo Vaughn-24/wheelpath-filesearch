@@ -181,9 +181,9 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
   const buttonEnabled = !streaming && !loading;
 
   return (
-    <div className="flex flex-col lg:flex-row h-full min-h-[600px] gap-4 lg:gap-6 p-4 lg:p-6 bg-gray-50 overflow-hidden">
+    <div className="flex flex-col md:flex-row h-full min-h-[600px] gap-4 md:gap-6 p-4 md:p-6 bg-gray-50 overflow-hidden">
       {/* PDF Viewer / Citation Source (Top on mobile, Left on desktop) */}
-      <div className="w-full lg:w-1/2 h-[250px] lg:h-auto lg:flex-1 bento-card p-0 flex flex-col overflow-hidden relative border-0 order-1 lg:order-1">
+      <div className="w-full md:w-1/2 h-[250px] md:h-auto md:flex-1 bento-card p-0 flex flex-col overflow-hidden relative border-0 order-1 md:order-1">
         {activePdfUrl ? (
           <iframe 
             src={`${activePdfUrl}#page=${page}`} 
@@ -191,33 +191,33 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
             title="PDF Viewer"
           />
         ) : (
-          <div className="flex flex-col items-center justify-center h-full p-4 lg:p-8 text-center bg-gray-100">
-            <div className="text-3xl lg:text-4xl mb-2 lg:mb-4 grayscale opacity-50">📄</div>
-            <p className="text-gray-400 text-sm lg:text-base">Select a citation to view source</p>
+          <div className="flex flex-col items-center justify-center h-full p-4 md:p-8 text-center bg-gray-100">
+            <div className="text-3xl md:text-4xl mb-2 md:mb-4 grayscale opacity-50">📄</div>
+            <p className="text-gray-400 text-sm md:text-base">Select a citation to view source</p>
           </div>
         )}
         {activePdfUrl && (
-          <div className="absolute bottom-4 lg:bottom-6 left-1/2 transform -translate-x-1/2 bg-black text-white px-3 lg:px-4 py-1 lg:py-1.5 rounded-full text-xs font-medium backdrop-blur-md bg-opacity-90 shadow-lg">
+          <div className="absolute bottom-4 md:bottom-6 left-1/2 transform -translate-x-1/2 bg-black text-white px-3 md:px-4 py-1 md:py-1.5 rounded-full text-xs font-medium backdrop-blur-md bg-opacity-90 shadow-lg">
             Page {page}
           </div>
         )}
       </div>
 
       {/* Chat (Bottom on mobile, Right on desktop) */}
-      <div className="w-full lg:w-1/2 flex-1 flex flex-col bento-card overflow-hidden p-0 order-2 lg:order-2 min-h-[300px] lg:min-h-0">
-        <div className="bg-white p-4 lg:p-6 border-b border-gray-100 flex justify-between items-center">
-          <h2 className="font-medium text-gray-900 truncate pr-2 lg:pr-4 text-sm lg:text-base">
+      <div className="w-full md:w-1/2 flex-1 flex flex-col bento-card overflow-hidden p-0 order-2 md:order-2 min-h-[300px] md:min-h-0">
+        <div className="bg-white p-4 md:p-6 border-b border-gray-100 flex justify-between items-center">
+          <h2 className="font-medium text-gray-900 truncate pr-2 md:pr-4 text-sm md:text-base">
             {activeTitle || 'Notebook Chat'}
           </h2>
-          <div className="flex items-center gap-1 lg:gap-2 flex-shrink-0">
+          <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
             {loading && <span className="text-xs text-gray-400">Connecting...</span>}
             {!loading && user && <span className="text-xs text-green-600">●</span>}
             {!loading && !user && <span className="text-xs text-amber-600">○</span>}
-            <span className="text-[8px] lg:text-[10px] uppercase tracking-widest text-gray-400 font-semibold hidden sm:inline">Gemini 1.5 Pro</span>
+            <span className="text-[8px] md:text-[10px] uppercase tracking-widest text-gray-400 font-semibold hidden sm:inline">Gemini 1.5 Pro</span>
           </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 lg:p-6 space-y-4 lg:space-y-6 bg-white">
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 md:space-y-6 bg-white">
           {chatError && (
             <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-red-700 text-sm">
               {chatError}
