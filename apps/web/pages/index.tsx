@@ -2,12 +2,14 @@ import { useState } from 'react';
 import DocumentUploader from '../components/DocumentUploader';
 import DocumentList from '../components/DocumentList';
 import ChatInterface from '../components/ChatInterface';
+import VoiceOverlay from '../components/VoiceOverlay';
 import { useAuth } from '../lib/auth';
 import { Document } from '@wheelpath/schemas';
 
 export default function Home() {
   const { user, loading, error, signInWithGoogle } = useAuth();
   const [selectedDoc, setSelectedDoc] = useState<(Document & { signedUrl?: string }) | null>(null);
+  const [voiceOpen, setVoiceOpen] = useState(false);
 
   const handleChatAll = () => {
     if (!user) {
@@ -155,6 +157,29 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {/* Voice Mode FAB - Floating Action Button */}
+      {user && (
+        <button
+          onClick={() => setVoiceOpen(true)}
+          className="fixed bottom-6 right-6 z-40 w-14 h-14 bg-black text-white rounded-full shadow-lg hover:bg-gray-800 hover:scale-105 transition-all duration-200 flex items-center justify-center group"
+          aria-label="Open voice mode"
+          title="Voice Mode"
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" className="group-hover:scale-110 transition-transform">
+            <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
+            <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+          </svg>
+        </button>
+      )}
+
+      {/* Voice Overlay - Completely isolated from ChatInterface */}
+      <VoiceOverlay
+        isOpen={voiceOpen}
+        onClose={() => setVoiceOpen(false)}
+        documentId={selectedDoc?.id}
+        documentTitle={selectedDoc?.title}
+      />
     </main>
   );
 }

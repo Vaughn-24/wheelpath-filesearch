@@ -1,7 +1,11 @@
 import 'reflect-metadata';
+import { config } from 'dotenv';
 import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
+
+// Load environment variables from .env file
+config();
 
 async function bootstrap() {
   const port = process.env.PORT || 3001;
@@ -16,7 +20,7 @@ async function bootstrap() {
       // Cloudflare Pages URLs
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',
-      /https:\/\/.*\.wheelpath2-ai\.pages\.dev$/,  // Preview deployments
+      /https:\/\/.*\.wheelpath2-ai\.pages\.dev$/, // Preview deployments
       // Custom domains
       'https://dev.wheelpath.ai',
       'https://wheelpath.ai',

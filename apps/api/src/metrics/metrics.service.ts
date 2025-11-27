@@ -2,7 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import * as admin from 'firebase-admin';
 
 interface UsageEvent {
-  type: 'document_processed' | 'chat_query' | 'embedding_generated' | 'vector_search';
+  type:
+    | 'document_processed'
+    | 'chat_query'
+    | 'embedding_generated'
+    | 'vector_search'
+    | 'voice_query';
   tenantId: string;
   documentId?: string;
   metadata?: {
@@ -13,6 +18,10 @@ interface UsageEvent {
     embeddingChars?: number;
     vectorNeighbors?: number;
     latencyMs?: number;
+    // Voice-specific metadata
+    queryLength?: number;
+    responseLength?: number;
+    hasContext?: boolean;
   };
 }
 
@@ -27,10 +36,10 @@ interface CostEstimate {
 // Pricing constants (USD)
 const PRICING = {
   EMBEDDING_PER_MILLION_CHARS: 0.025,
-  VECTOR_SEARCH_PER_MILLION_QUERIES: 2.00,
-  VECTOR_UPSERT_PER_MILLION: 0.10,
+  VECTOR_SEARCH_PER_MILLION_QUERIES: 2.0,
+  VECTOR_UPSERT_PER_MILLION: 0.1,
   GEMINI_FLASH_INPUT_PER_MILLION_TOKENS: 0.075,
-  GEMINI_FLASH_OUTPUT_PER_MILLION_TOKENS: 0.30,
+  GEMINI_FLASH_OUTPUT_PER_MILLION_TOKENS: 0.3,
   FIRESTORE_READ_PER_100K: 0.06,
   FIRESTORE_WRITE_PER_100K: 0.18,
 };
@@ -86,7 +95,7 @@ export class MetricsService {
    */
   private estimateCost(event: UsageEvent): CostEstimate {
     const meta = event.metadata || {};
-    
+
     let embeddingCost = 0;
     let vectorSearchCost = 0;
     let geminiCost = 0;
@@ -114,10 +123,12 @@ export class MetricsService {
         vectorSearchCost = (1 / 1_000_000) * PRICING.VECTOR_SEARCH_PER_MILLION_QUERIES;
         // Gemini tokens
         if (meta.inputTokens) {
-          geminiCost += (meta.inputTokens / 1_000_000) * PRICING.GEMINI_FLASH_INPUT_PER_MILLION_TOKENS;
+          geminiCost +=
+            (meta.inputTokens / 1_000_000) * PRICING.GEMINI_FLASH_INPUT_PER_MILLION_TOKENS;
         }
         if (meta.outputTokens) {
-          geminiCost += (meta.outputTokens / 1_000_000) * PRICING.GEMINI_FLASH_OUTPUT_PER_MILLION_TOKENS;
+          geminiCost +=
+            (meta.outputTokens / 1_000_000) * PRICING.GEMINI_FLASH_OUTPUT_PER_MILLION_TOKENS;
         }
         // Firestore reads for chunks
         if (meta.vectorNeighbors) {
@@ -195,15 +206,18 @@ export class MetricsService {
       .orderBy('date', 'desc')
       .get();
 
-    const daily = snapshot.docs.map(doc => doc.data());
+    const daily = snapshot.docs.map((doc) => doc.data());
 
     // Aggregate totals
-    const totals = daily.reduce((acc, day) => ({
-      documents: acc.documents + (day.counts?.document_processed || 0),
-      queries: acc.queries + (day.counts?.chat_query || 0),
-      totalCost: acc.totalCost + (day.costs?.total || 0),
-      uniqueTenants: new Set([...acc.uniqueTenants, ...(day.tenants || [])]),
-    }), { documents: 0, queries: 0, totalCost: 0, uniqueTenants: new Set() });
+    const totals = daily.reduce(
+      (acc, day) => ({
+        documents: acc.documents + (day.counts?.document_processed || 0),
+        queries: acc.queries + (day.counts?.chat_query || 0),
+        totalCost: acc.totalCost + (day.costs?.total || 0),
+        uniqueTenants: new Set([...acc.uniqueTenants, ...(day.tenants || [])]),
+      }),
+      { documents: 0, queries: 0, totalCost: 0, uniqueTenants: new Set() },
+    );
 
     return {
       period: `${days} days`,
@@ -218,4 +232,3 @@ export class MetricsService {
     };
   }
 }
-

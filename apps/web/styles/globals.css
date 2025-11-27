@@ -22,3 +22,25 @@
     @apply w-full bg-gray-50 border-transparent focus:border-black focus:ring-0 rounded-xl p-3 transition-colors placeholder:text-gray-400;
   }
 }
+
+/* Voice Mode Animations */
+@layer utilities {
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-out;
+  }
+  
+  .animate-spin-slow {
+    animation: spin 3s linear infinite;
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
