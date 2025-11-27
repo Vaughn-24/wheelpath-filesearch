@@ -33,7 +33,10 @@ export default function ChatInterface({ documentId, documentTitle, signedUrl }: 
   }, [signedUrl, documentTitle]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only auto-scroll when there are messages (not on initial load)
+    if (messages.length > 0) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   const handleCitationClick = async (citation: Citation) => {
