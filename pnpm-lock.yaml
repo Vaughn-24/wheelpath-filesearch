@@ -68,6 +68,9 @@ importers:
       '@google-cloud/storage':
         specifier: ^7.17.3
         version: 7.17.3
+      '@google-cloud/text-to-speech':
+        specifier: ^5.5.0
+        version: 5.8.1
       '@google-cloud/vertexai':
         specifier: ^1.10.0
         version: 1.10.0
@@ -783,6 +786,10 @@ packages:
   '@google-cloud/storage@7.17.3':
     resolution: {integrity: sha512-gOnCAbFgAYKRozywLsxagdevTF7Gm+2Ncz5u5CQAuOv/2VCa0rdGJWvJFDOftPx1tc+q8TXiC2pEJfFKu+yeMQ==}
     engines: {node: '>=14'}
+
+  '@google-cloud/text-to-speech@5.8.1':
+    resolution: {integrity: sha512-HXyZBtfQq+ETSLwWV/k3zFRWSzt+KEfiC5/OqXNNUed+lU/LEyN0CsqqEmkFfkL8BPsVIMAK2xiYCaDsKENukg==}
+    engines: {node: '>=14.0.0'}
 
   '@google-cloud/vertexai@1.10.0':
     resolution: {integrity: sha512-HqYqoivNtkq59po8m7KI0n+lWKdz4kabENncYQXZCX/hBWJfXtKAfR/2nUQsP+TwSfHKoA7zDL2RrJYIv/j3VQ==}
@@ -5616,6 +5623,13 @@ snapshots:
       - encoding
       - supports-color
 
+  '@google-cloud/text-to-speech@5.8.1':
+    dependencies:
+      google-gax: 4.6.1
+    transitivePeerDependencies:
+      - encoding
+      - supports-color
+
   '@google-cloud/vertexai@1.10.0':
     dependencies:
       google-auth-library: 9.15.1
@@ -6312,8 +6326,7 @@ snapshots:
 
   '@types/lodash@4.17.21': {}
 
-  '@types/long@4.0.2':
-    optional: true
+  '@types/long@4.0.2': {}
 
   '@types/methods@1.1.4': {}
 
@@ -8177,7 +8190,6 @@ snapshots:
     transitivePeerDependencies:
       - encoding
       - supports-color
-    optional: true
 
   google-gax@5.0.6:
     dependencies:
@@ -9760,7 +9772,6 @@ snapshots:
   proto3-json-serializer@2.0.2:
     dependencies:
       protobufjs: 7.5.4
-    optional: true
 
   proto3-json-serializer@3.0.4:
     dependencies:

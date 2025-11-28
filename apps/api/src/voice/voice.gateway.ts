@@ -10,6 +10,7 @@ import {
 import { Server, Socket } from 'socket.io';
 import * as admin from 'firebase-admin';
 import { VoiceService } from './voice.service';
+import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 
 interface VoiceSession {
   tenantId: string;
@@ -51,8 +52,45 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   server!: Server;
 
   private sessions = new Map<string, VoiceSession>();
+  private ttsClient: TextToSpeechClient;
 
-  constructor(private readonly voiceService: VoiceService) {}
+  constructor(private readonly voiceService: VoiceService) {
+    this.ttsClient = new TextToSpeechClient();
+  }
+
+  /**
+   * Convert text to high-quality speech using Google Cloud TTS
+   * Uses Journey voices for the most natural sound
+   */
+  private async textToSpeech(text: string): Promise<Buffer | null> {
+    try {
+      const [response] = await this.ttsClient.synthesizeSpeech({
+        input: { text },
+        voice: {
+          languageCode: 'en-US',
+          // Journey voices are the most natural-sounding
+          name: 'en-US-Journey-D', // Male, calm, professional
+          // Alternative options:
+          // 'en-US-Journey-F' - Female, calm, professional
+          // 'en-US-Studio-O' - Male, warm
+          // 'en-US-Studio-Q' - Female, warm
+        },
+        audioConfig: {
+          audioEncoding: 'MP3',
+          speakingRate: 1.0,
+          pitch: 0,
+          effectsProfileId: ['headphone-class-device'], // Optimized for headphones
+        },
+      });
+
+      if (response.audioContent) {
+        return Buffer.from(response.audioContent as Uint8Array);
+      }
+    } catch (error: any) {
+      console.error('TTS failed:', error.message);
+    }
+    return null;
+  }
 
   async handleConnection(client: Socket) {
     console.log(`Voice client connected: ${client.id}`);
@@ -162,7 +200,20 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       }
 
       if (session.isActive) {
-        client.emit('voiceEnd', { fullText: fullResponse });
+        // Convert text to high-quality speech using Google Cloud TTS
+        const audioBuffer = await this.textToSpeech(fullResponse);
+        
+        if (audioBuffer) {
+          // Send audio as base64 for the client to play
+          const audioBase64 = audioBuffer.toString('base64');
+          client.emit('voiceAudio', { 
+            audio: audioBase64, 
+            format: 'mp3',
+            fullText: fullResponse 
+          });
+        }
+        
+        client.emit('voiceEnd', { fullText: fullResponse, hasAudio: !!audioBuffer });
       }
     } catch (error: any) {
       console.error(`Voice query error for ${client.id}:`, error);

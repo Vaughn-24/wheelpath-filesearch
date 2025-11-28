@@ -33,6 +33,7 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
   const socketRef = useRef<any>(null);
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Connect to WebSocket when overlay opens
   useEffect(() => {
@@ -72,9 +73,18 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
           setResponse(prev => prev + data.text);
         });
 
-        socket.on('voiceEnd', (data: { fullText: string }) => {
+        socket.on('voiceAudio', (data: { audio: string; format: string; fullText: string }) => {
+          // Play high-quality audio from Google Cloud TTS
           setState('speaking');
-          speakResponse(data.fullText);
+          playAudioFromBase64(data.audio, data.format);
+        });
+
+        socket.on('voiceEnd', (data: { fullText: string; hasAudio?: boolean }) => {
+          // If no audio was sent, fall back to browser TTS
+          if (!data.hasAudio) {
+            setState('speaking');
+            speakResponse(data.fullText);
+          }
         });
 
         socket.on('voiceError', (data: { message: string }) => {
@@ -191,7 +201,45 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
     }
   }, []);
 
-  // Browser Text-to-Speech
+  // Play high-quality audio from Google Cloud TTS
+  const playAudioFromBase64 = useCallback((base64Audio: string, format: string) => {
+    try {
+      // Stop any existing audio
+      if (audioRef.current) {
+        audioRef.current.pause();
+        audioRef.current = null;
+      }
+
+      // Create audio from base64
+      const audioBlob = new Blob(
+        [Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0))],
+        { type: `audio/${format}` }
+      );
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      
+      audio.onended = () => {
+        setState('idle');
+        URL.revokeObjectURL(audioUrl);
+        audioRef.current = null;
+      };
+
+      audio.onerror = () => {
+        console.error('Audio playback failed');
+        setState('idle');
+        URL.revokeObjectURL(audioUrl);
+        audioRef.current = null;
+      };
+
+      audioRef.current = audio;
+      audio.play();
+    } catch (err) {
+      console.error('Failed to play audio:', err);
+      setState('idle');
+    }
+  }, []);
+
+  // Browser Text-to-Speech (fallback)
   const speakResponse = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) {
       setState('idle');
@@ -220,6 +268,12 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    // Stop Google Cloud TTS audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    // Stop browser TTS fallback
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
