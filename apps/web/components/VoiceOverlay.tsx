@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+
 import { useAuth } from '../lib/auth';
 
 type VoiceState = 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'error';
+
+interface AudioChunk {
+  audio: string;
+  index: number;
+  text: string;
+  isFinal?: boolean;
+}
 
 interface VoiceOverlayProps {
   isOpen: boolean;
@@ -11,29 +19,42 @@ interface VoiceOverlayProps {
 }
 
 /**
- * VoiceOverlay - Full-screen voice interface
- * 
- * This component is COMPLETELY ISOLATED from ChatInterface.
- * It uses WebSocket (/voice namespace) instead of HTTP (/chat/stream).
- * 
+ * VoiceOverlay - Full-screen voice interface with STREAMING AUDIO
+ *
+ * OPTIMIZED FOR LOW LATENCY:
+ * - Receives audio chunks as they're generated (not waiting for full response)
+ * - Uses audio queue for seamless playback
+ * - Starts speaking within 1-2 seconds of asking
+ *
  * Flow:
  * 1. User opens overlay -> WebSocket connects
  * 2. User speaks -> Browser Speech Recognition -> Text
  * 3. Text sent to server via WebSocket
- * 4. Server streams response chunks
- * 5. Browser TTS speaks the response
+ * 4. Server streams audio chunks as sentences complete
+ * 5. Client plays audio chunks progressively
  */
-export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitle }: VoiceOverlayProps) {
+export default function VoiceOverlay({
+  isOpen,
+  onClose,
+  documentId,
+  documentTitle,
+}: VoiceOverlayProps) {
   const { user } = useAuth();
   const [state, setState] = useState<VoiceState>('idle');
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [error, setError] = useState<string | null>(null);
-  
-  const socketRef = useRef<any>(null);
-  const recognitionRef = useRef<any>(null);
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const socketRef = useRef<ReturnType<typeof import('socket.io-client').io> | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recognitionRef = useRef<SpeechRecognition | null>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Audio queue for streaming playback
+  const audioQueueRef = useRef<AudioChunk[]>([]);
+  const isPlayingRef = useRef(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Connect to WebSocket when overlay opens
   useEffect(() => {
@@ -67,24 +88,37 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
         socket.on('voiceStart', () => {
           setState('processing');
           setResponse('');
+          // Clear audio queue for new response
+          audioQueueRef.current = [];
+          isPlayingRef.current = false;
         });
 
         socket.on('voiceChunk', (data: { text: string }) => {
-          setResponse(prev => prev + data.text);
+          setResponse((prev) => prev + data.text);
         });
 
+        // NEW: Handle streaming audio chunks
+        socket.on('voiceAudioChunk', (data: AudioChunk) => {
+          // Add to queue and start playing if not already
+          audioQueueRef.current.push(data);
+          if (!isPlayingRef.current) {
+            playNextAudioChunk();
+          }
+        });
+
+        // Legacy: single audio response (fallback)
         socket.on('voiceAudio', (data: { audio: string; format: string; fullText: string }) => {
-          // Play high-quality audio from Google Cloud TTS
           setState('speaking');
           playAudioFromBase64(data.audio, data.format);
         });
 
-        socket.on('voiceEnd', (data: { fullText: string; hasAudio?: boolean }) => {
-          // If no audio was sent, fall back to browser TTS
-          if (!data.hasAudio) {
+        socket.on('voiceEnd', (data: { fullText: string; audioChunks?: number }) => {
+          // If no audio chunks were sent, fall back to browser TTS
+          if (!data.audioChunks || data.audioChunks === 0) {
             setState('speaking');
             speakResponse(data.fullText);
           }
+          // Otherwise, audio queue will handle transition to idle
         });
 
         socket.on('voiceError', (data: { message: string }) => {
@@ -106,7 +140,7 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
         });
 
         socketRef.current = socket;
-      } catch (err: any) {
+      } catch (err: unknown) {
         console.error('Socket connection failed:', err);
         setError('Failed to connect');
         setState('error');
@@ -140,9 +174,11 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    const recognition = new SpeechRecognition();
-    
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const SpeechRecognitionAPI =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const recognition = new SpeechRecognitionAPI();
+
     recognition.continuous = false;
     recognition.interimResults = true;
     recognition.lang = 'en-US';
@@ -153,7 +189,7 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
       setResponse('');
     };
 
-    recognition.onresult = (event: any) => {
+    recognition.onresult = (event: SpeechRecognitionEvent) => {
       let finalTranscript = '';
       let interimTranscript = '';
 
@@ -174,7 +210,7 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
       }
     };
 
-    recognition.onerror = (event: any) => {
+    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('Speech recognition error:', event.error);
       if (event.error !== 'no-speech') {
         setError(`Speech error: ${event.error}`);
@@ -201,37 +237,83 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
     }
   }, []);
 
-  // Play high-quality audio from Google Cloud TTS
-  const playAudioFromBase64 = useCallback((base64Audio: string, format: string) => {
-    try {
-      // Stop any existing audio
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
+  // Play next audio chunk from queue (for streaming playback)
+  const playNextAudioChunk = useCallback(() => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingRef.current = false;
+      // Check if we should go back to idle
+      if (state === 'speaking') {
+        setState('idle');
       }
+      return;
+    }
 
-      // Create audio from base64
-      const audioBlob = new Blob(
-        [Uint8Array.from(atob(base64Audio), c => c.charCodeAt(0))],
-        { type: `audio/${format}` }
-      );
+    isPlayingRef.current = true;
+    setState('speaking');
+
+    const chunk = audioQueueRef.current.shift()!;
+
+    try {
+      const audioBlob = new Blob([Uint8Array.from(atob(chunk.audio), (c) => c.charCodeAt(0))], {
+        type: 'audio/mp3',
+      });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
-      
+
+      audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        currentAudioRef.current = null;
+        // Play next chunk in queue
+        playNextAudioChunk();
+      };
+
+      audio.onerror = () => {
+        console.error('Audio chunk playback failed');
+        URL.revokeObjectURL(audioUrl);
+        currentAudioRef.current = null;
+        // Try next chunk
+        playNextAudioChunk();
+      };
+
+      currentAudioRef.current = audio;
+      audio.play().catch((err) => {
+        console.error('Audio play failed:', err);
+        playNextAudioChunk();
+      });
+    } catch (err) {
+      console.error('Failed to create audio:', err);
+      playNextAudioChunk();
+    }
+  }, [state]);
+
+  // Play single audio (legacy/fallback)
+  const playAudioFromBase64 = useCallback((base64Audio: string, format: string) => {
+    try {
+      if (currentAudioRef.current) {
+        currentAudioRef.current.pause();
+        currentAudioRef.current = null;
+      }
+
+      const audioBlob = new Blob([Uint8Array.from(atob(base64Audio), (c) => c.charCodeAt(0))], {
+        type: `audio/${format}`,
+      });
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+
       audio.onended = () => {
         setState('idle');
         URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
+        currentAudioRef.current = null;
       };
 
       audio.onerror = () => {
         console.error('Audio playback failed');
         setState('idle');
         URL.revokeObjectURL(audioUrl);
-        audioRef.current = null;
+        currentAudioRef.current = null;
       };
 
-      audioRef.current = audio;
+      currentAudioRef.current = audio;
       audio.play();
     } catch (err) {
       console.error('Failed to play audio:', err);
@@ -252,7 +334,7 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.rate = 1.0;
     utterance.pitch = 1.0;
-    
+
     utterance.onend = () => {
       setState('idle');
       synthRef.current = null;
@@ -268,10 +350,14 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
   }, []);
 
   const stopSpeaking = useCallback(() => {
-    // Stop Google Cloud TTS audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
+    // Clear audio queue
+    audioQueueRef.current = [];
+    isPlayingRef.current = false;
+
+    // Stop current audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
     }
     // Stop browser TTS fallback
     if ('speechSynthesis' in window) {
@@ -352,13 +438,20 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
             {documentTitle || 'All Documents'}
           </p>
         </div>
-        <button 
+        <button
           onClick={handleClose}
           className="p-3 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
           aria-label="Close voice mode"
         >
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12"/>
+          <svg
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+          >
+            <path d="M18 6L6 18M6 6l12 12" />
           </svg>
         </button>
       </div>
@@ -376,26 +469,28 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
           <div className="w-full h-full rounded-full bg-white/10 flex items-center justify-center">
             {state === 'listening' && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
-                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
               </svg>
             )}
             {state === 'speaking' && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
-                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/>
+                <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
               </svg>
             )}
             {(state === 'idle' || state === 'error') && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
-                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
-                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
+                <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
               </svg>
             )}
           </div>
         </button>
 
         {/* Status Text */}
-        <p className={`mt-8 text-xl font-medium ${state === 'error' ? 'text-red-600' : 'text-gray-900'}`}>
+        <p
+          className={`mt-8 text-xl font-medium ${state === 'error' ? 'text-red-600' : 'text-gray-900'}`}
+        >
           {getStatusText()}
         </p>
 
@@ -414,7 +509,10 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
       <div className="p-6 flex justify-center gap-6">
         {state === 'speaking' && (
           <button
-            onClick={() => { stopSpeaking(); setState('idle'); }}
+            onClick={() => {
+              stopSpeaking();
+              setState('idle');
+            }}
             className="px-6 py-3 bg-gray-100 text-gray-700 rounded-full font-medium hover:bg-gray-200 transition-colors"
           >
             Stop Speaking
@@ -431,16 +529,17 @@ export default function VoiceOverlay({ isOpen, onClose, documentId, documentTitl
       </div>
 
       {/* Browser Support Warning */}
-      {typeof window !== 'undefined' && !('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window) && (
-        <div className="absolute bottom-20 left-0 right-0 px-6">
-          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-            <p className="text-amber-800 text-sm">
-              Voice recognition requires Chrome, Edge, or Safari.
-            </p>
+      {typeof window !== 'undefined' &&
+        !('webkitSpeechRecognition' in window) &&
+        !('SpeechRecognition' in window) && (
+          <div className="absolute bottom-20 left-0 right-0 px-6">
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
+              <p className="text-amber-800 text-sm">
+                Voice recognition requires Chrome, Edge, or Safari.
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
     </div>
   );
 }
-
