@@ -48,7 +48,7 @@ export default function VoiceOverlay({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const socketRef = useRef<ReturnType<typeof import('socket.io-client').io> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
+  const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
 
   // Audio queue for streaming playback
@@ -189,7 +189,8 @@ export default function VoiceOverlay({
       setResponse('');
     };
 
-    recognition.onresult = (event: SpeechRecognitionEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onresult = (event: any) => {
       let finalTranscript = '';
       let interimTranscript = '';
 
@@ -210,7 +211,8 @@ export default function VoiceOverlay({
       }
     };
 
-    recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    recognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error);
       if (event.error !== 'no-speech') {
         setError(`Speech error: ${event.error}`);
