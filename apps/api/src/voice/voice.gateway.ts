@@ -63,7 +63,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   /**
    * Convert a sentence/phrase to speech using Google Cloud TTS
-   * Optimized for streaming - converts small chunks quickly
+   * Uses Zephyr voice from Chirp3 HD - Google's newest, most natural voice
+   *
+   * Zephyr: Bright, clear, professional tone - perfect for WheelPath's
+   * "calm field mentor" persona
    */
   private async textToSpeechChunk(text: string): Promise<Buffer | null> {
     if (!text.trim()) return null;
@@ -73,12 +76,13 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         input: { text },
         voice: {
           languageCode: 'en-US',
-          // Journey voices are the most natural-sounding (Neural2 based)
-          name: 'en-US-Journey-D', // Male, calm, professional
+          // Zephyr from Chirp3 HD - Google's state-of-the-art voice
+          // Described as "Bright" - clear and professional
+          name: 'en-US-Chirp3-HD-Zephyr',
         },
         audioConfig: {
           audioEncoding: 'MP3',
-          speakingRate: 1.05, // Slightly faster for responsiveness
+          speakingRate: 1.0, // Natural pace for Chirp3 HD
           pitch: 0,
           effectsProfileId: ['headphone-class-device'],
         },
