@@ -13,7 +13,8 @@ steps:
 
   # Push the image
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA']
+    args:
+      ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA']
 
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest']

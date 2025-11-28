@@ -110,6 +110,9 @@ importers:
       firebase-admin:
         specifier: ^13.6.0
         version: 13.6.0
+      google-auth-library:
+        specifier: ^9.15.1
+        version: 9.15.1
       passport:
         specifier: ^0.7.0
         version: 0.7.0
