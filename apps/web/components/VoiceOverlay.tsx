@@ -2,13 +2,27 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { useAuth } from '../lib/auth';
 
-type VoiceState = 'idle' | 'connecting' | 'listening' | 'processing' | 'speaking' | 'error';
+type VoiceState =
+  | 'idle'
+  | 'connecting'
+  | 'listening'
+  | 'processing'
+  | 'speaking'
+  | 'error'
+  | 'rateLimited';
 
 interface AudioChunk {
   audio: string;
   index: number;
   text: string;
   isFinal?: boolean;
+}
+
+interface SessionLimits {
+  maxQueriesPerMinute: number;
+  queryCooldownMs: number;
+  maxSessionMinutes: number;
+  idleTimeoutMinutes: number;
 }
 
 interface VoiceOverlayProps {
@@ -19,20 +33,32 @@ interface VoiceOverlayProps {
 }
 
 /**
- * VoiceOverlay - Full-screen voice interface with STREAMING AUDIO
+ * VoiceOverlay - Full-screen voice interface with COST PROTECTIONS
  *
- * OPTIMIZED FOR LOW LATENCY:
- * - Receives audio chunks as they're generated (not waiting for full response)
- * - Uses audio queue for seamless playback
- * - Starts speaking within 1-2 seconds of asking
+ * COST PROTECTION FEATURES:
+ * - Auto-close on idle timeout (server-side enforced)
+ * - Rate limiting display and handling
+ * - Session timeout warnings
+ * - Silence detection timeout (15 seconds)
+ * - Connection status indicator
+ * - Browser TTS fallback for cost savings
  *
  * Flow:
  * 1. User opens overlay -> WebSocket connects
  * 2. User speaks -> Browser Speech Recognition -> Text
- * 3. Text sent to server via WebSocket
+ * 3. Text sent to server via WebSocket (rate limited)
  * 4. Server streams audio chunks as sentences complete
  * 5. Client plays audio chunks progressively
  */
+
+// Frontend cost protection settings
+const FRONTEND_LIMITS = {
+  SILENCE_TIMEOUT_MS: 15000, // 15 seconds of silence before stopping
+  MAX_LISTENING_DURATION_MS: 60000, // 60 seconds max continuous listening
+  IDLE_WARNING_MS: 240000, // Show warning after 4 minutes idle
+  AUTO_CLOSE_IDLE_MS: 300000, // Auto-close after 5 minutes idle
+};
+
 export default function VoiceOverlay({
   isOpen,
   onClose,
@@ -44,6 +70,12 @@ export default function VoiceOverlay({
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [sessionLimits, setSessionLimits] = useState<SessionLimits | null>(null);
+  const [showIdleWarning, setShowIdleWarning] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<
+    'connected' | 'disconnected' | 'connecting'
+  >('disconnected');
+  const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const socketRef = useRef<ReturnType<typeof import('socket.io-client').io> | null>(null);
@@ -56,16 +88,47 @@ export default function VoiceOverlay({
   const isPlayingRef = useRef(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
+  // Timeout refs for cost protection
+  const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const listeningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const idleWarningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const autoCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastActivityRef = useRef<number>(Date.now());
+
+  // Reset idle timers on activity
+  const resetIdleTimers = useCallback(() => {
+    lastActivityRef.current = Date.now();
+    setShowIdleWarning(false);
+
+    if (idleWarningTimeoutRef.current) {
+      clearTimeout(idleWarningTimeoutRef.current);
+    }
+    if (autoCloseTimeoutRef.current) {
+      clearTimeout(autoCloseTimeoutRef.current);
+    }
+
+    // Set idle warning
+    idleWarningTimeoutRef.current = setTimeout(() => {
+      setShowIdleWarning(true);
+    }, FRONTEND_LIMITS.IDLE_WARNING_MS);
+
+    // Set auto-close
+    autoCloseTimeoutRef.current = setTimeout(() => {
+      console.log('Auto-closing voice overlay due to inactivity');
+      onClose();
+    }, FRONTEND_LIMITS.AUTO_CLOSE_IDLE_MS);
+  }, [onClose]);
+
   // Connect to WebSocket when overlay opens
   useEffect(() => {
     if (!isOpen || !user) return;
 
     const connectSocket = async () => {
       setState('connecting');
+      setConnectionStatus('connecting');
       setError(null);
 
       try {
-        // Dynamic import socket.io-client (only when needed)
         const { io } = await import('socket.io-client');
         const token = await user.getIdToken();
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
@@ -77,49 +140,82 @@ export default function VoiceOverlay({
 
         socket.on('connect', () => {
           console.log('Voice socket connected');
+          setConnectionStatus('connected');
+          resetIdleTimers();
         });
 
-        socket.on('authenticated', () => {
+        socket.on('authenticated', (data: { tenantId: string; limits?: SessionLimits }) => {
           setState('idle');
-          // Set document context
+          if (data.limits) {
+            setSessionLimits(data.limits);
+          }
           socket.emit('setDocument', { documentId: documentId || 'all' });
+        });
+
+        // Heartbeat handling
+        socket.on('heartbeat', () => {
+          socket.emit('heartbeatAck');
+        });
+
+        // Session timeout from server
+        socket.on('sessionTimeout', (data: { reason: string; message: string }) => {
+          setError(data.message);
+          setState('error');
+          setTimeout(() => onClose(), 3000);
+        });
+
+        // Rate limiting
+        socket.on('rateLimited', (data: { message: string }) => {
+          setRateLimitMessage(data.message);
+          setState('rateLimited');
+          setTimeout(() => {
+            setRateLimitMessage(null);
+            setState('idle');
+          }, 3000);
         });
 
         socket.on('voiceStart', () => {
           setState('processing');
           setResponse('');
-          // Clear audio queue for new response
+          resetIdleTimers();
           audioQueueRef.current = [];
           isPlayingRef.current = false;
         });
 
-        socket.on('voiceChunk', (data: { text: string }) => {
+        socket.on('voiceChunk', (data: { text: string; truncated?: boolean }) => {
           setResponse((prev) => prev + data.text);
+          if (data.truncated) {
+            setResponse((prev) => prev + '... [truncated for cost control]');
+          }
         });
 
-        // NEW: Handle streaming audio chunks
         socket.on('voiceAudioChunk', (data: AudioChunk) => {
-          // Add to queue and start playing if not already
           audioQueueRef.current.push(data);
           if (!isPlayingRef.current) {
             playNextAudioChunk();
           }
         });
 
-        // Legacy: single audio response (fallback)
+        // Browser TTS fallback (cost savings)
+        socket.on('voiceBrowserTTS', (data: { text: string; index: number; isFinal?: boolean }) => {
+          speakWithBrowserTTS(data.text);
+        });
+
         socket.on('voiceAudio', (data: { audio: string; format: string; fullText: string }) => {
           setState('speaking');
           playAudioFromBase64(data.audio, data.format);
         });
 
-        socket.on('voiceEnd', (data: { fullText: string; audioChunks?: number }) => {
-          // If no audio chunks were sent, fall back to browser TTS
-          if (!data.audioChunks || data.audioChunks === 0) {
-            setState('speaking');
-            speakResponse(data.fullText);
-          }
-          // Otherwise, audio queue will handle transition to idle
-        });
+        socket.on(
+          'voiceEnd',
+          (data: { fullText: string; audioChunks?: number; truncated?: boolean }) => {
+            resetIdleTimers();
+            if (!data.audioChunks || data.audioChunks === 0) {
+              setState('speaking');
+              speakWithBrowserTTS(data.fullText);
+            }
+          },
+        );
 
         socket.on('voiceError', (data: { message: string }) => {
           setError(data.message);
@@ -133,6 +229,7 @@ export default function VoiceOverlay({
 
         socket.on('disconnect', () => {
           console.log('Voice socket disconnected');
+          setConnectionStatus('disconnected');
           if (isOpen) {
             setState('error');
             setError('Connection lost');
@@ -144,6 +241,7 @@ export default function VoiceOverlay({
         console.error('Socket connection failed:', err);
         setError('Failed to connect');
         setState('error');
+        setConnectionStatus('disconnected');
       }
     };
 
@@ -156,8 +254,13 @@ export default function VoiceOverlay({
       }
       stopListening();
       stopSpeaking();
+      // Clear all timeouts
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+      if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
+      if (idleWarningTimeoutRef.current) clearTimeout(idleWarningTimeoutRef.current);
+      if (autoCloseTimeoutRef.current) clearTimeout(autoCloseTimeoutRef.current);
     };
-  }, [isOpen, user, documentId]);
+  }, [isOpen, user, documentId, onClose, resetIdleTimers]);
 
   // Update document context when it changes
   useEffect(() => {
@@ -166,13 +269,15 @@ export default function VoiceOverlay({
     }
   }, [documentId]);
 
-  // Browser Speech Recognition
+  // Browser Speech Recognition with silence detection
   const startListening = useCallback(() => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setError('Speech recognition not supported in this browser');
       setState('error');
       return;
     }
+
+    resetIdleTimers();
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const SpeechRecognitionAPI =
@@ -187,10 +292,33 @@ export default function VoiceOverlay({
       setState('listening');
       setTranscript('');
       setResponse('');
+
+      // Set silence timeout
+      silenceTimeoutRef.current = setTimeout(() => {
+        console.log('Silence timeout - stopping listening');
+        recognition.stop();
+        setState('idle');
+      }, FRONTEND_LIMITS.SILENCE_TIMEOUT_MS);
+
+      // Set max listening duration
+      listeningTimeoutRef.current = setTimeout(() => {
+        console.log('Max listening duration reached');
+        recognition.stop();
+        setState('idle');
+      }, FRONTEND_LIMITS.MAX_LISTENING_DURATION_MS);
     };
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
+      // Reset silence timeout on speech detected
+      if (silenceTimeoutRef.current) {
+        clearTimeout(silenceTimeoutRef.current);
+        silenceTimeoutRef.current = setTimeout(() => {
+          console.log('Silence timeout - stopping listening');
+          recognition.stop();
+        }, FRONTEND_LIMITS.SILENCE_TIMEOUT_MS);
+      }
+
       let finalTranscript = '';
       let interimTranscript = '';
 
@@ -206,6 +334,9 @@ export default function VoiceOverlay({
       setTranscript(finalTranscript || interimTranscript);
 
       if (finalTranscript && socketRef.current) {
+        // Clear timeouts
+        if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+        if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
         // Send final transcript to server
         socketRef.current.emit('voiceQuery', { text: finalTranscript });
       }
@@ -214,6 +345,9 @@ export default function VoiceOverlay({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onerror = (event: any) => {
       console.error('Speech recognition error:', event.error);
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+      if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
+
       if (event.error !== 'no-speech') {
         setError(`Speech error: ${event.error}`);
         setState('error');
@@ -223,6 +357,9 @@ export default function VoiceOverlay({
     };
 
     recognition.onend = () => {
+      if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+      if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
+
       if (state === 'listening') {
         setState('idle');
       }
@@ -230,20 +367,22 @@ export default function VoiceOverlay({
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [state]);
+  }, [state, resetIdleTimers]);
 
   const stopListening = useCallback(() => {
+    if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
+    if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
+
     if (recognitionRef.current) {
       recognitionRef.current.stop();
       recognitionRef.current = null;
     }
   }, []);
 
-  // Play next audio chunk from queue (for streaming playback)
+  // Play next audio chunk from queue
   const playNextAudioChunk = useCallback(() => {
     if (audioQueueRef.current.length === 0) {
       isPlayingRef.current = false;
-      // Check if we should go back to idle
       if (state === 'speaking') {
         setState('idle');
       }
@@ -265,7 +404,6 @@ export default function VoiceOverlay({
       audio.onended = () => {
         URL.revokeObjectURL(audioUrl);
         currentAudioRef.current = null;
-        // Play next chunk in queue
         playNextAudioChunk();
       };
 
@@ -273,7 +411,6 @@ export default function VoiceOverlay({
         console.error('Audio chunk playback failed');
         URL.revokeObjectURL(audioUrl);
         currentAudioRef.current = null;
-        // Try next chunk
         playNextAudioChunk();
       };
 
@@ -323,14 +460,14 @@ export default function VoiceOverlay({
     }
   }, []);
 
-  // Browser Text-to-Speech (fallback)
-  const speakResponse = useCallback((text: string) => {
+  // Browser Text-to-Speech (cost-saving fallback)
+  const speakWithBrowserTTS = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) {
       setState('idle');
       return;
     }
 
-    // Cancel any ongoing speech
+    setState('speaking');
     window.speechSynthesis.cancel();
 
     const utterance = new SpeechSynthesisUtterance(text);
@@ -352,24 +489,22 @@ export default function VoiceOverlay({
   }, []);
 
   const stopSpeaking = useCallback(() => {
-    // Clear audio queue
     audioQueueRef.current = [];
     isPlayingRef.current = false;
 
-    // Stop current audio
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
       currentAudioRef.current = null;
     }
-    // Stop browser TTS fallback
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
     }
     synthRef.current = null;
   }, []);
 
-  // Handle main button press
   const handleMainAction = () => {
+    resetIdleTimers();
+
     if (state === 'listening') {
       stopListening();
     } else if (state === 'speaking') {
@@ -377,13 +512,13 @@ export default function VoiceOverlay({
       setState('idle');
     } else if (state === 'idle') {
       startListening();
-    } else if (state === 'error') {
+    } else if (state === 'error' || state === 'rateLimited') {
       setState('idle');
       setError(null);
+      setRateLimitMessage(null);
     }
   };
 
-  // Handle close
   const handleClose = () => {
     stopListening();
     stopSpeaking();
@@ -395,7 +530,6 @@ export default function VoiceOverlay({
 
   if (!isOpen) return null;
 
-  // State-based styling
   const getOrbStyles = () => {
     switch (state) {
       case 'connecting':
@@ -408,6 +542,8 @@ export default function VoiceOverlay({
         return 'bg-gradient-to-tr from-emerald-500 to-green-400 animate-pulse';
       case 'error':
         return 'bg-red-500';
+      case 'rateLimited':
+        return 'bg-yellow-500';
       default:
         return 'bg-gradient-to-tr from-gray-700 to-gray-600';
     }
@@ -425,6 +561,8 @@ export default function VoiceOverlay({
         return 'Speaking...';
       case 'error':
         return error || 'Error occurred';
+      case 'rateLimited':
+        return rateLimitMessage || 'Please wait...';
       default:
         return 'Tap to speak';
     }
@@ -440,23 +578,56 @@ export default function VoiceOverlay({
             {documentTitle || 'All Documents'}
           </p>
         </div>
-        <button
-          onClick={handleClose}
-          className="p-3 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
-          aria-label="Close voice mode"
-        >
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+        <div className="flex items-center gap-3">
+          {/* Connection Status Indicator */}
+          <div className="flex items-center gap-2">
+            <div
+              className={`w-2 h-2 rounded-full ${
+                connectionStatus === 'connected'
+                  ? 'bg-green-500'
+                  : connectionStatus === 'connecting'
+                    ? 'bg-yellow-500 animate-pulse'
+                    : 'bg-red-500'
+              }`}
+            />
+            <span className="text-xs text-gray-500 hidden sm:inline">
+              {connectionStatus === 'connected'
+                ? 'Connected'
+                : connectionStatus === 'connecting'
+                  ? 'Connecting'
+                  : 'Disconnected'}
+            </span>
+          </div>
+          <button
+            onClick={handleClose}
+            className="p-3 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
+            aria-label="Close voice mode"
           >
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-        </button>
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+            >
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
       </div>
+
+      {/* Idle Warning Banner */}
+      {showIdleWarning && (
+        <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-center">
+          <p className="text-amber-800 text-sm">
+            Session will close soon due to inactivity.{' '}
+            <button onClick={resetIdleTimers} className="underline font-medium">
+              Stay connected
+            </button>
+          </p>
+        </div>
+      )}
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col items-center justify-center px-6">
@@ -467,7 +638,6 @@ export default function VoiceOverlay({
           className={`w-32 h-32 md:w-40 md:h-40 rounded-full shadow-2xl transition-all duration-500 transform hover:scale-105 disabled:cursor-wait ${getOrbStyles()}`}
           aria-label={state === 'listening' ? 'Stop listening' : 'Start listening'}
         >
-          {/* Inner glow effect */}
           <div className="w-full h-full rounded-full bg-white/10 flex items-center justify-center">
             {state === 'listening' && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
@@ -478,6 +648,11 @@ export default function VoiceOverlay({
             {state === 'speaking' && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
                 <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
+              </svg>
+            )}
+            {state === 'rateLimited' && (
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
               </svg>
             )}
             {(state === 'idle' || state === 'error') && (
@@ -491,10 +666,24 @@ export default function VoiceOverlay({
 
         {/* Status Text */}
         <p
-          className={`mt-8 text-xl font-medium ${state === 'error' ? 'text-red-600' : 'text-gray-900'}`}
+          className={`mt-8 text-xl font-medium ${
+            state === 'error'
+              ? 'text-red-600'
+              : state === 'rateLimited'
+                ? 'text-yellow-600'
+                : 'text-gray-900'
+          }`}
         >
           {getStatusText()}
         </p>
+
+        {/* Session Limits Info */}
+        {sessionLimits && state === 'idle' && (
+          <p className="mt-2 text-xs text-gray-400">
+            {sessionLimits.maxQueriesPerMinute} queries/min • {sessionLimits.maxSessionMinutes} min
+            max session
+          </p>
+        )}
 
         {/* Transcript/Response Display */}
         <div className="mt-6 w-full max-w-md text-center min-h-[80px]">
