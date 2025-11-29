@@ -16,7 +16,21 @@ const storage = new Storage();
 const project = process.env.GCP_PROJECT || 'wheelpath-ai-dev';
 const location = process.env.GCP_LOCATION || 'us-central1';
 // For Upsert, we need the Index ID, not the Endpoint ID
-const indexId = process.env.VERTEX_INDEX_ID; 
+const indexId = process.env.VERTEX_INDEX_ID;
+
+/**
+ * ============================================================================
+ * COST PROTECTION: Ingestion Limits
+ * ============================================================================
+ * These limits prevent runaway costs from large document processing.
+ */
+const INGESTION_LIMITS = {
+  MAX_FILE_SIZE_MB: parseInt(process.env.INGESTION_MAX_FILE_MB || '25'),
+  MAX_PAGES: parseInt(process.env.INGESTION_MAX_PAGES || '200'),
+  MAX_CHUNKS: parseInt(process.env.INGESTION_MAX_CHUNKS || '500'),
+  MAX_TEXT_LENGTH: parseInt(process.env.INGESTION_MAX_TEXT_LENGTH || '2000000'), // ~2MB of text
+  EMBEDDING_BATCH_DELAY_MS: parseInt(process.env.INGESTION_BATCH_DELAY_MS || '100'), // Rate limit embeddings
+}; 
 
 // Use PredictionServiceClient for embeddings to avoid SDK issues
 const predictionClient = new aiplatform.v1.PredictionServiceClient({
@@ -61,9 +75,27 @@ cloudEvent('processDocument', async (cloudEvent: any) => {
   const bucketName = file.bucket;
   const fileName = file.name;
   const contentType = file.contentType;
+  const fileSize = parseInt(file.size || '0');
 
   if (!contentType?.includes('pdf')) {
     console.log('Skipping non-PDF file');
+    return;
+  }
+
+  // === COST PROTECTION: Check file size ===
+  const fileSizeMB = fileSize / (1024 * 1024);
+  if (fileSizeMB > INGESTION_LIMITS.MAX_FILE_SIZE_MB) {
+    console.error(`File too large: ${fileSizeMB.toFixed(2)}MB > ${INGESTION_LIMITS.MAX_FILE_SIZE_MB}MB limit`);
+    // We can't easily reject at this point since upload already happened
+    // But we can mark as error and skip processing
+    const parts = fileName.split('/');
+    if (parts.length >= 2) {
+      const documentId = parts[1].replace('.pdf', '');
+      await firestore.collection('documents').doc(documentId).update({
+        status: 'error',
+        errorMessage: `File too large (${fileSizeMB.toFixed(1)}MB). Maximum is ${INGESTION_LIMITS.MAX_FILE_SIZE_MB}MB.`
+      });
+    }
     return;
   }
 
@@ -77,7 +109,7 @@ cloudEvent('processDocument', async (cloudEvent: any) => {
   const tenantId = parts[0];
   const documentId = parts[1].replace('.pdf', ''); // simple removal of extension
 
-  console.log(`Processing ${documentId} for ${tenantId}`);
+  console.log(`Processing ${documentId} for ${tenantId} (${fileSizeMB.toFixed(2)}MB)`);
 
   // Update Firestore status (use set with merge to handle missing docs)
   const docRef = firestore.collection('documents').doc(documentId);
@@ -140,6 +172,22 @@ cloudEvent('processDocument', async (cloudEvent: any) => {
         throw new Error('No text extracted');
     }
 
+    // === COST PROTECTION: Check page count ===
+    if (pageCount > INGESTION_LIMITS.MAX_PAGES) {
+      console.error(`Too many pages: ${pageCount} > ${INGESTION_LIMITS.MAX_PAGES} limit`);
+      await docRef.update({
+        status: 'error',
+        errorMessage: `Document has too many pages (${pageCount}). Maximum is ${INGESTION_LIMITS.MAX_PAGES} pages.`
+      });
+      return;
+    }
+
+    // === COST PROTECTION: Check text length ===
+    if (text.length > INGESTION_LIMITS.MAX_TEXT_LENGTH) {
+      console.warn(`Text truncated from ${text.length} to ${INGESTION_LIMITS.MAX_TEXT_LENGTH} chars`);
+      text = text.slice(0, INGESTION_LIMITS.MAX_TEXT_LENGTH);
+    }
+
     // 3. Chunk (Page-aware)
     const pages = text.split('[[[PAGE:');
     let allChunks: { text: string, page: number }[] = [];
@@ -155,6 +203,18 @@ cloudEvent('processDocument', async (cloudEvent: any) => {
         // Overlap: 400 chars (~100 tokens) for context continuity
         const pageChunks = chunkText(pageText, 4000, 400);
         pageChunks.forEach(c => allChunks.push({ text: c, page: pageNum }));
+
+        // === COST PROTECTION: Limit total chunks ===
+        if (allChunks.length >= INGESTION_LIMITS.MAX_CHUNKS) {
+          console.warn(`Chunk limit reached: ${INGESTION_LIMITS.MAX_CHUNKS}`);
+          break;
+        }
+    }
+    
+    // Enforce chunk limit
+    if (allChunks.length > INGESTION_LIMITS.MAX_CHUNKS) {
+      console.warn(`Truncating chunks from ${allChunks.length} to ${INGESTION_LIMITS.MAX_CHUNKS}`);
+      allChunks = allChunks.slice(0, INGESTION_LIMITS.MAX_CHUNKS);
     }
     
     console.log(`Generated ${allChunks.length} chunks across ${pageCount} pages`);
@@ -200,6 +260,11 @@ cloudEvent('processDocument', async (cloudEvent: any) => {
         pageNumber: chunk.page,
         pageSpan: `Page ${chunk.page}`
       });
+
+      // === COST PROTECTION: Rate limit embedding calls ===
+      if (INGESTION_LIMITS.EMBEDDING_BATCH_DELAY_MS > 0 && i < allChunks.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, INGESTION_LIMITS.EMBEDDING_BATCH_DELAY_MS));
+      }
     }
 
     if (indexId && points.length > 0) {
