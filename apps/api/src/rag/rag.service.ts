@@ -1,14 +1,17 @@
-import { Injectable } from '@nestjs/common';
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
 import * as aiplatform from '@google-cloud/aiplatform';
-import * as admin from 'firebase-admin';
+import { Injectable } from '@nestjs/common';
 import { Message } from '@wheelpath/schemas';
+import * as admin from 'firebase-admin';
+
 import { MetricsService } from '../metrics/metrics.service';
+
+/* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-var-requires */
 
 @Injectable()
 export class RagService {
   private genAI: GoogleGenerativeAI | null = null;
-  private model: any;
+  private model: GenerativeModel | null = null;
   private predictionClient: aiplatform.v1.PredictionServiceClient;
   private firestore: admin.firestore.Firestore;
 
@@ -18,14 +21,22 @@ export class RagService {
   private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;
   private publicEndpointDomain = process.env.VERTEX_PUBLIC_ENDPOINT_DOMAIN;
 
+  // Cost protection: request timeout (30 seconds)
+  private readonly REQUEST_TIMEOUT_MS = 30000;
+
   constructor(private readonly metricsService: MetricsService) {
     // Use Google AI API with GEMINI_API_KEY
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
-      // Use gemini-2.0-flash as specified in config
-      this.model = this.genAI.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-      console.log('Initialized Gemini with Google AI API (gemini-2.0-flash-exp)');
+      // Use gemini-2.0-flash (latest stable) with cost guardrails
+      this.model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.0-flash',
+        generationConfig: {
+          maxOutputTokens: 2000, // Cost guardrail: limit response size
+        },
+      });
+      console.log('Initialized Gemini with Google AI API (gemini-2.0-flash)');
     } else {
       console.warn('GEMINI_API_KEY not set - chat will use fallback responses');
     }
@@ -313,26 +324,60 @@ Remember: Every response should produce clarity and confidence.`;
 
     const chat = this.model.startChat({ history: chatHistory });
 
-    const result = await chat.sendMessageStream(query);
+    try {
+      // Add timeout protection around the LLM call
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('LLM request timeout')), this.REQUEST_TIMEOUT_MS);
+      });
 
-    // Track usage metrics (non-blocking)
-    this.metricsService
-      .track({
-        type: 'chat_query',
-        tenantId,
-        documentId: documentId === 'all' ? undefined : documentId,
-        metadata: {
-          embeddingChars: query.length,
-          vectorNeighbors: chunksData.length,
-          // Note: Token counts would require response inspection
-          // which we can't do with streaming without buffering
-        },
-      })
-      .catch((err) => console.warn('Metrics tracking failed:', err.message));
+      const result = (await Promise.race([chat.sendMessageStream(query), timeoutPromise])) as any;
 
-    return {
-      stream: result.stream,
-      citations: chunksData,
-    };
+      // Track usage metrics (non-blocking)
+      this.metricsService
+        .track({
+          type: 'chat_query',
+          tenantId,
+          documentId: documentId === 'all' ? undefined : documentId,
+          metadata: {
+            embeddingChars: query.length,
+            vectorNeighbors: chunksData.length,
+          },
+        })
+        .catch((err) => console.warn('Metrics tracking failed:', err.message));
+
+      return {
+        stream: result.stream,
+        citations: chunksData,
+      };
+    } catch (error: any) {
+      console.error('LLM streaming failed:', error.message);
+
+      // Return fallback stream on any error (timeout, quota, network, etc.)
+      const errorStream = (async function* () {
+        yield {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text:
+                      error.message?.includes('429') || error.message?.includes('quota')
+                        ? "I've hit my rate limit for now. Please wait a moment and try again. Your documents are ready — just give me a few seconds."
+                        : error.message?.includes('timeout')
+                          ? 'That took longer than expected. Let me try again with a shorter response.'
+                          : 'I ran into a temporary issue. Please try again in a moment. Get Clarity. Go Build.',
+                  },
+                ],
+              },
+            },
+          ],
+        };
+      })();
+
+      return {
+        stream: errorStream,
+        citations: chunksData,
+      };
+    }
   }
 }

@@ -3,34 +3,267 @@
 @tailwind utilities;
 
 @layer base {
-  body {
-    @apply bg-gray-50 text-gray-900 antialiased;
+  :root {
+    /* Core colors as CSS variables for easy access */
+    --background: #FAF8F5;
+    --surface: #FFFFFF;
+    --foreground: #2C2419;
+    --foreground-muted: #6B5D4D;
+    --foreground-subtle: #A69882;
+    
+    --terracotta: #C2703E;
+    --terracotta-light: #F5E6DC;
+    --terracotta-dark: #A85D32;
+    
+    --amber: #D4A030;
+    --amber-light: #FDF6E3;
+    
+    --error: #B54A32;
+    --success: #5A7D4C;
+    
+    --border: #D4CFC6;
+    --border-hover: #C2703E;
+    
+    /* Voice mode */
+    --voice-bg: #1A1612;
+    --voice-surface: #2C2419;
+    --voice-text: #FAF8F5;
+    
+    /* Shadows */
+    --shadow-sm: 0 2px 8px rgba(44, 36, 25, 0.06);
+    --shadow-md: 0 4px 16px rgba(44, 36, 25, 0.08);
+    --shadow-lg: 0 8px 32px rgba(44, 36, 25, 0.12);
+    --shadow-xl: 0 16px 48px rgba(44, 36, 25, 0.16);
+    
+    /* Transitions */
+    --transition-fast: 150ms ease;
+    --transition-base: 200ms ease;
+    --transition-slow: 300ms ease;
   }
-}
 
-/* Bento Card Utility */
-@layer components {
-  .bento-card {
-    @apply bg-white border border-gray-200 rounded-3xl shadow-sm p-6 transition-all duration-200 hover:shadow-md hover:border-gray-300;
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: 'ss01' on, 'ss02' on, 'cv01' on;
   }
   
-  .btn-primary {
-    @apply bg-black text-white rounded-full px-6 py-2.5 font-medium hover:bg-gray-800 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-
-  .input-modern {
-    @apply w-full bg-gray-50 border-transparent focus:border-black focus:ring-0 rounded-xl p-3 transition-colors placeholder:text-gray-400;
+  /* Focus ring for accessibility */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-terracotta ring-offset-2 ring-offset-background;
   }
 }
 
-/* Voice Mode Animations */
+/* Component Classes */
+@layer components {
+  /* Bento Card - Borderless with shadow */
+  .bento-card {
+    @apply bg-surface rounded-md shadow-sm p-xl transition-all duration-base;
+  }
+  
+  .bento-card:hover {
+    @apply shadow-md;
+  }
+  
+  /* Hero Card - Terracotta branded */
+  .hero-card {
+    @apply bg-terracotta text-white rounded-md shadow-md p-2xl transition-all duration-base;
+  }
+  
+  .hero-card-secondary {
+    @apply text-white/80;
+  }
+  
+  /* Primary Button - Warm Charcoal */
+  .btn-primary {
+    @apply bg-foreground text-white rounded-md px-xl py-md font-medium 
+           transition-all duration-base
+           hover:bg-[#3D3225]
+           focus:ring-2 focus:ring-terracotta focus:ring-offset-2 focus:ring-offset-background
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  /* Secondary Button - Outline */
+  .btn-secondary {
+    @apply bg-transparent text-foreground border-[1.5px] border-foreground rounded-md px-xl py-md font-medium
+           transition-all duration-base
+           hover:border-terracotta hover:bg-background
+           focus:border-terracotta focus:ring-2 focus:ring-terracotta focus:ring-offset-2
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  /* Accent Button - Terracotta */
+  .btn-accent {
+    @apply bg-terracotta text-white rounded-md px-xl py-md font-medium
+           transition-all duration-base
+           hover:bg-terracotta-dark
+           focus:ring-2 focus:ring-foreground focus:ring-offset-2 focus:ring-offset-background
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+  
+  /* Ghost Button */
+  .btn-ghost {
+    @apply bg-transparent text-foreground-muted rounded-md px-lg py-sm font-medium
+           transition-all duration-base
+           hover:text-foreground hover:bg-terracotta-light
+           focus:ring-2 focus:ring-terracotta focus:ring-offset-2;
+  }
+  
+  /* Underline Input */
+  .input-underline {
+    @apply w-full bg-transparent border-0 border-b-2 border-border 
+           py-md px-0 text-body text-foreground
+           placeholder:text-foreground-subtle
+           transition-all duration-base
+           focus:border-terracotta focus:outline-none focus:ring-0;
+  }
+  
+  /* Modern Input (for chat, etc.) */
+  .input-modern {
+    @apply w-full bg-surface border-0 border-b-2 border-border
+           rounded-t-md py-lg px-lg text-body text-foreground
+           placeholder:text-foreground-subtle
+           transition-all duration-base
+           focus:border-terracotta focus:outline-none focus:ring-0;
+  }
+  
+  /* Document Card */
+  .doc-card {
+    @apply bg-surface shadow-sm rounded-md p-lg
+           border-2 border-transparent
+           transition-all duration-base cursor-pointer;
+  }
+  
+  .doc-card:hover {
+    @apply shadow-md border-terracotta;
+  }
+  
+  /* Status Text (minimal, text-only) */
+  .status-ready {
+    @apply text-foreground-muted text-caption;
+  }
+  
+  .status-processing {
+    @apply text-foreground-muted text-caption italic;
+  }
+  
+  .status-error {
+    @apply text-error text-caption;
+  }
+  
+  /* Chat Bubble - User */
+  .chat-bubble-user {
+    @apply bg-foreground text-white p-lg rounded-md text-body-sm leading-relaxed;
+  }
+  
+  /* Chat Bubble - AI */
+  .chat-bubble-ai {
+    @apply bg-terracotta-light text-foreground p-lg rounded-md text-body-sm leading-relaxed;
+  }
+  
+  /* Citation Button */
+  .citation-btn {
+    @apply text-terracotta font-bold bg-terracotta-light 
+           px-2 py-0.5 rounded-sm text-caption
+           transition-all duration-fast
+           hover:bg-terracotta hover:text-white;
+  }
+  
+  /* Alert Banner */
+  .alert-error {
+    @apply bg-[#FCEAE8] border border-error/20 rounded-md p-lg text-error text-body-sm;
+  }
+  
+  .alert-warning {
+    @apply bg-amber-light border border-amber/20 rounded-md p-lg text-foreground text-body-sm;
+  }
+  
+  .alert-success {
+    @apply bg-[#E8F4E5] border border-success/20 rounded-md p-lg text-success text-body-sm;
+  }
+}
+
+/* Voice Mode Styles */
+@layer components {
+  .voice-overlay {
+    @apply fixed inset-0 z-50 flex flex-col;
+    background: linear-gradient(180deg, #1A1612 0%, #2C2419 100%);
+  }
+  
+  .voice-orb {
+    @apply w-32 h-32 md:w-40 md:h-40 rounded-full shadow-xl
+           transition-all duration-slow transform;
+  }
+  
+  .voice-orb-idle {
+    background: linear-gradient(135deg, #3D3225 0%, #2C2419 100%);
+  }
+  
+  .voice-orb-listening {
+    background: linear-gradient(135deg, #C2703E 0%, #D4A030 100%);
+    @apply animate-pulse scale-110;
+  }
+  
+  .voice-orb-processing {
+    background: linear-gradient(135deg, #D4A030 0%, #C2703E 100%);
+    @apply animate-spin-slow;
+  }
+  
+  .voice-orb-speaking {
+    background: linear-gradient(135deg, #5A7D4C 0%, #6B8E5C 100%);
+    @apply animate-pulse;
+  }
+  
+  .voice-orb-error {
+    @apply bg-error;
+  }
+  
+  /* Light theme voice orb (with vignette background) */
+  .voice-orb-light {
+    @apply w-32 h-32 md:w-40 md:h-40 rounded-full shadow-lg
+           transition-all duration-slow transform;
+  }
+  
+  .voice-orb-light-idle {
+    @apply bg-terracotta-light border-2 border-terracotta/30;
+  }
+  
+  .voice-orb-light-listening {
+    background: linear-gradient(135deg, #C2703E 0%, #D4A030 100%);
+    @apply animate-pulse scale-110 shadow-xl;
+    box-shadow: 0 0 40px rgba(194, 112, 62, 0.4);
+  }
+  
+  .voice-orb-light-processing {
+    background: linear-gradient(135deg, #D4A030 0%, #C2703E 100%);
+    @apply animate-spin-slow shadow-xl;
+  }
+  
+  .voice-orb-light-speaking {
+    background: linear-gradient(135deg, #5A7D4C 0%, #6B8E5C 100%);
+    @apply animate-pulse shadow-xl;
+    box-shadow: 0 0 40px rgba(90, 125, 76, 0.4);
+  }
+  
+  .voice-orb-light-error {
+    @apply bg-error;
+  }
+}
+
+/* Utility Animations */
 @layer utilities {
   .animate-fade-in {
     animation: fadeIn 0.3s ease-out;
   }
   
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+  
   .animate-spin-slow {
     animation: spin 3s linear infinite;
+  }
+  
+  .animate-pulse-slow {
+    animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 }
 
@@ -42,5 +275,25 @@
   to {
     opacity: 1;
     transform: translateY(0);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
   }
 }

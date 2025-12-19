@@ -236,8 +236,14 @@ export class RateLimitService {
     this.checkAndResetIfNeeded(usage.documentsUploaded);
 
     return {
-      chatQueriesRemaining: Math.max(0, RATE_LIMITS.CHAT_QUERIES_PER_HOUR - usage.chatQueries.count),
-      uploadsRemaining: Math.max(0, RATE_LIMITS.DOCS_UPLOADS_PER_HOUR - usage.documentsUploaded.count),
+      chatQueriesRemaining: Math.max(
+        0,
+        RATE_LIMITS.CHAT_QUERIES_PER_HOUR - usage.chatQueries.count,
+      ),
+      uploadsRemaining: Math.max(
+        0,
+        RATE_LIMITS.DOCS_UPLOADS_PER_HOUR - usage.documentsUploaded.count,
+      ),
       storageMBUsed: usage.totalStorageBytes / (1024 * 1024),
       storageMBLimit: RATE_LIMITS.STORAGE_PER_TENANT_MB,
     };
@@ -258,8 +264,9 @@ export class RateLimitService {
 
   /**
    * Validate and trim chat history
+   * Keeps only the last N messages
    */
-  validateHistory(history: { role: string; content: string }[]): { role: string; content: string }[] {
+  validateHistory<T extends { role: string; content: string }>(history: T[]): T[] {
     // Keep only the last N messages
     if (history.length > RATE_LIMITS.CHAT_HISTORY_MAX_MESSAGES) {
       return history.slice(-RATE_LIMITS.CHAT_HISTORY_MAX_MESSAGES);
@@ -267,4 +274,3 @@ export class RateLimitService {
     return history;
   }
 }
-

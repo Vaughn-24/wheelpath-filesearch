@@ -32,31 +32,11 @@ interface VoiceOverlayProps {
   documentTitle?: string;
 }
 
-/**
- * VoiceOverlay - Full-screen voice interface with COST PROTECTIONS
- *
- * COST PROTECTION FEATURES:
- * - Auto-close on idle timeout (server-side enforced)
- * - Rate limiting display and handling
- * - Session timeout warnings
- * - Silence detection timeout (15 seconds)
- * - Connection status indicator
- * - Browser TTS fallback for cost savings
- *
- * Flow:
- * 1. User opens overlay -> WebSocket connects
- * 2. User speaks -> Browser Speech Recognition -> Text
- * 3. Text sent to server via WebSocket (rate limited)
- * 4. Server streams audio chunks as sentences complete
- * 5. Client plays audio chunks progressively
- */
-
-// Frontend cost protection settings
 const FRONTEND_LIMITS = {
-  SILENCE_TIMEOUT_MS: 15000, // 15 seconds of silence before stopping
-  MAX_LISTENING_DURATION_MS: 60000, // 60 seconds max continuous listening
-  IDLE_WARNING_MS: 240000, // Show warning after 4 minutes idle
-  AUTO_CLOSE_IDLE_MS: 300000, // Auto-close after 5 minutes idle
+  SILENCE_TIMEOUT_MS: 15000,
+  MAX_LISTENING_DURATION_MS: 60000,
+  IDLE_WARNING_MS: 240000,
+  AUTO_CLOSE_IDLE_MS: 300000,
 };
 
 export default function VoiceOverlay({
@@ -83,19 +63,16 @@ export default function VoiceOverlay({
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Audio queue for streaming playback
   const audioQueueRef = useRef<AudioChunk[]>([]);
   const isPlayingRef = useRef(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Timeout refs for cost protection
   const silenceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const listeningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const idleWarningTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const autoCloseTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const lastActivityRef = useRef<number>(Date.now());
 
-  // Reset idle timers on activity
   const resetIdleTimers = useCallback(() => {
     lastActivityRef.current = Date.now();
     setShowIdleWarning(false);
@@ -107,19 +84,16 @@ export default function VoiceOverlay({
       clearTimeout(autoCloseTimeoutRef.current);
     }
 
-    // Set idle warning
     idleWarningTimeoutRef.current = setTimeout(() => {
       setShowIdleWarning(true);
     }, FRONTEND_LIMITS.IDLE_WARNING_MS);
 
-    // Set auto-close
     autoCloseTimeoutRef.current = setTimeout(() => {
       console.log('Auto-closing voice overlay due to inactivity');
       onClose();
     }, FRONTEND_LIMITS.AUTO_CLOSE_IDLE_MS);
   }, [onClose]);
 
-  // Connect to WebSocket when overlay opens
   useEffect(() => {
     if (!isOpen || !user) return;
 
@@ -152,19 +126,16 @@ export default function VoiceOverlay({
           socket.emit('setDocument', { documentId: documentId || 'all' });
         });
 
-        // Heartbeat handling
         socket.on('heartbeat', () => {
           socket.emit('heartbeatAck');
         });
 
-        // Session timeout from server
         socket.on('sessionTimeout', (data: { reason: string; message: string }) => {
           setError(data.message);
           setState('error');
           setTimeout(() => onClose(), 3000);
         });
 
-        // Rate limiting
         socket.on('rateLimited', (data: { message: string }) => {
           setRateLimitMessage(data.message);
           setState('rateLimited');
@@ -185,7 +156,7 @@ export default function VoiceOverlay({
         socket.on('voiceChunk', (data: { text: string; truncated?: boolean }) => {
           setResponse((prev) => prev + data.text);
           if (data.truncated) {
-            setResponse((prev) => prev + '... [truncated for cost control]');
+            setResponse((prev) => prev + '... [truncated]');
           }
         });
 
@@ -196,7 +167,6 @@ export default function VoiceOverlay({
           }
         });
 
-        // Browser TTS fallback (cost savings)
         socket.on('voiceBrowserTTS', (data: { text: string; index: number; isFinal?: boolean }) => {
           speakWithBrowserTTS(data.text);
         });
@@ -254,7 +224,6 @@ export default function VoiceOverlay({
       }
       stopListening();
       stopSpeaking();
-      // Clear all timeouts
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
       if (idleWarningTimeoutRef.current) clearTimeout(idleWarningTimeoutRef.current);
@@ -262,14 +231,12 @@ export default function VoiceOverlay({
     };
   }, [isOpen, user, documentId, onClose, resetIdleTimers]);
 
-  // Update document context when it changes
   useEffect(() => {
     if (socketRef.current && documentId) {
       socketRef.current.emit('setDocument', { documentId });
     }
   }, [documentId]);
 
-  // Browser Speech Recognition with silence detection
   const startListening = useCallback(() => {
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setError('Speech recognition not supported in this browser');
@@ -279,9 +246,10 @@ export default function VoiceOverlay({
 
     resetIdleTimers();
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     const recognition = new SpeechRecognitionAPI();
 
     recognition.continuous = false;
@@ -293,14 +261,12 @@ export default function VoiceOverlay({
       setTranscript('');
       setResponse('');
 
-      // Set silence timeout
       silenceTimeoutRef.current = setTimeout(() => {
         console.log('Silence timeout - stopping listening');
         recognition.stop();
         setState('idle');
       }, FRONTEND_LIMITS.SILENCE_TIMEOUT_MS);
 
-      // Set max listening duration
       listeningTimeoutRef.current = setTimeout(() => {
         console.log('Max listening duration reached');
         recognition.stop();
@@ -310,7 +276,6 @@ export default function VoiceOverlay({
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     recognition.onresult = (event: any) => {
-      // Reset silence timeout on speech detected
       if (silenceTimeoutRef.current) {
         clearTimeout(silenceTimeoutRef.current);
         silenceTimeoutRef.current = setTimeout(() => {
@@ -334,10 +299,8 @@ export default function VoiceOverlay({
       setTranscript(finalTranscript || interimTranscript);
 
       if (finalTranscript && socketRef.current) {
-        // Clear timeouts
         if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
         if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
-        // Send final transcript to server
         socketRef.current.emit('voiceQuery', { text: finalTranscript });
       }
     };
@@ -379,7 +342,6 @@ export default function VoiceOverlay({
     }
   }, []);
 
-  // Play next audio chunk from queue
   const playNextAudioChunk = useCallback(() => {
     if (audioQueueRef.current.length === 0) {
       isPlayingRef.current = false;
@@ -425,7 +387,6 @@ export default function VoiceOverlay({
     }
   }, [state]);
 
-  // Play single audio (legacy/fallback)
   const playAudioFromBase64 = useCallback((base64Audio: string, format: string) => {
     try {
       if (currentAudioRef.current) {
@@ -460,7 +421,6 @@ export default function VoiceOverlay({
     }
   }, []);
 
-  // Browser Text-to-Speech (cost-saving fallback)
   const speakWithBrowserTTS = useCallback((text: string) => {
     if (!('speechSynthesis' in window)) {
       setState('idle');
@@ -530,22 +490,22 @@ export default function VoiceOverlay({
 
   if (!isOpen) return null;
 
-  const getOrbStyles = () => {
+  const getOrbClass = () => {
     switch (state) {
       case 'connecting':
-        return 'bg-gray-400 animate-pulse';
+        return 'voice-orb-idle animate-pulse';
       case 'listening':
-        return 'bg-gradient-to-tr from-blue-500 to-cyan-400 animate-pulse scale-110';
+        return 'voice-orb-listening';
       case 'processing':
-        return 'bg-gradient-to-tr from-amber-500 to-orange-400 animate-spin-slow';
+        return 'voice-orb-processing';
       case 'speaking':
-        return 'bg-gradient-to-tr from-emerald-500 to-green-400 animate-pulse';
+        return 'voice-orb-speaking';
       case 'error':
-        return 'bg-red-500';
+        return 'voice-orb-error';
       case 'rateLimited':
-        return 'bg-yellow-500';
+        return 'bg-amber';
       default:
-        return 'bg-gradient-to-tr from-gray-700 to-gray-600';
+        return 'voice-orb-idle';
     }
   };
 
@@ -569,28 +529,28 @@ export default function VoiceOverlay({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-white/98 backdrop-blur-xl transition-all duration-300 animate-fade-in">
+    <div className="voice-overlay animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between p-6">
+      <div className="flex items-center justify-between p-xl">
         <div>
-          <h2 className="text-lg font-medium text-gray-900">Voice Mode</h2>
-          <p className="text-sm text-gray-500 truncate max-w-[200px]">
+          <h2 className="text-heading font-medium text-voice-text">Voice Mode</h2>
+          <p className="text-body-sm text-voice-muted truncate max-w-[200px]">
             {documentTitle || 'All Documents'}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {/* Connection Status Indicator */}
-          <div className="flex items-center gap-2">
+        <div className="flex items-center gap-md">
+          {/* Connection Status */}
+          <div className="flex items-center gap-sm">
             <div
               className={`w-2 h-2 rounded-full ${
                 connectionStatus === 'connected'
-                  ? 'bg-green-500'
+                  ? 'bg-success'
                   : connectionStatus === 'connecting'
-                    ? 'bg-yellow-500 animate-pulse'
-                    : 'bg-red-500'
+                    ? 'bg-amber animate-pulse'
+                    : 'bg-error'
               }`}
             />
-            <span className="text-xs text-gray-500 hidden sm:inline">
+            <span className="text-caption text-voice-muted hidden sm:inline">
               {connectionStatus === 'connected'
                 ? 'Connected'
                 : connectionStatus === 'connecting'
@@ -600,18 +560,12 @@ export default function VoiceOverlay({
           </div>
           <button
             onClick={handleClose}
-            className="p-3 bg-gray-100 rounded-full hover:bg-gray-200 transition-colors"
+            className="p-md bg-voice-surface rounded-md text-voice-text hover:bg-voice-muted/20 transition-all duration-base
+                       focus:ring-2 focus:ring-terracotta focus:ring-offset-2 focus:ring-offset-voice-bg"
             aria-label="Close voice mode"
           >
-            <svg
-              width="20"
-              height="20"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-            >
-              <path d="M18 6L6 18M6 6l12 12" />
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
             </svg>
           </button>
         </div>
@@ -619,10 +573,13 @@ export default function VoiceOverlay({
 
       {/* Idle Warning Banner */}
       {showIdleWarning && (
-        <div className="mx-6 mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-center">
-          <p className="text-amber-800 text-sm">
+        <div className="mx-xl mb-lg p-md bg-amber/20 border border-amber/30 rounded-md text-center">
+          <p className="text-amber text-body-sm">
             Session will close soon due to inactivity.{' '}
-            <button onClick={resetIdleTimers} className="underline font-medium">
+            <button
+              onClick={resetIdleTimers}
+              className="underline font-medium hover:text-amber-light"
+            >
               Stay connected
             </button>
           </p>
@@ -630,12 +587,13 @@ export default function VoiceOverlay({
       )}
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6">
-        {/* Orb Visualizer */}
+      <div className="flex-1 flex flex-col items-center justify-center px-xl">
+        {/* Orb */}
         <button
           onClick={handleMainAction}
           disabled={state === 'connecting' || state === 'processing'}
-          className={`w-32 h-32 md:w-40 md:h-40 rounded-full shadow-2xl transition-all duration-500 transform hover:scale-105 disabled:cursor-wait ${getOrbStyles()}`}
+          className={`voice-orb ${getOrbClass()} hover:scale-105 disabled:cursor-wait
+                      focus:ring-4 focus:ring-terracotta/50 focus:ring-offset-4 focus:ring-offset-voice-bg`}
           aria-label={state === 'listening' ? 'Stop listening' : 'Start listening'}
         >
           <div className="w-full h-full rounded-full bg-white/10 flex items-center justify-center">
@@ -652,10 +610,13 @@ export default function VoiceOverlay({
             )}
             {state === 'rateLimited' && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
-                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
               </svg>
             )}
-            {(state === 'idle' || state === 'error') && (
+            {(state === 'idle' ||
+              state === 'error' ||
+              state === 'connecting' ||
+              state === 'processing') && (
               <svg width="48" height="48" viewBox="0 0 24 24" fill="white">
                 <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z" />
                 <path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z" />
@@ -666,45 +627,45 @@ export default function VoiceOverlay({
 
         {/* Status Text */}
         <p
-          className={`mt-8 text-xl font-medium ${
+          className={`mt-2xl text-heading font-medium ${
             state === 'error'
-              ? 'text-red-600'
+              ? 'text-error'
               : state === 'rateLimited'
-                ? 'text-yellow-600'
-                : 'text-gray-900'
+                ? 'text-amber'
+                : 'text-voice-text'
           }`}
         >
           {getStatusText()}
         </p>
 
-        {/* Session Limits Info */}
+        {/* Session Limits */}
         {sessionLimits && state === 'idle' && (
-          <p className="mt-2 text-xs text-gray-400">
+          <p className="mt-sm text-caption text-voice-muted">
             {sessionLimits.maxQueriesPerMinute} queries/min • {sessionLimits.maxSessionMinutes} min
-            max session
+            max
           </p>
         )}
 
-        {/* Transcript/Response Display */}
-        <div className="mt-6 w-full max-w-md text-center min-h-[80px]">
+        {/* Transcript/Response */}
+        <div className="mt-xl w-full max-w-md text-center min-h-[80px]">
           {transcript && state === 'listening' && (
-            <p className="text-gray-600 italic">&ldquo;{transcript}&rdquo;</p>
+            <p className="text-voice-muted italic text-body">&ldquo;{transcript}&rdquo;</p>
           )}
           {response && (state === 'processing' || state === 'speaking') && (
-            <p className="text-gray-800">{response}</p>
+            <p className="text-voice-text text-body">{response}</p>
           )}
         </div>
       </div>
 
       {/* Footer Controls */}
-      <div className="p-6 flex justify-center gap-6">
+      <div className="p-xl flex justify-center gap-lg">
         {state === 'speaking' && (
           <button
             onClick={() => {
               stopSpeaking();
               setState('idle');
             }}
-            className="px-6 py-3 bg-gray-100 text-gray-700 rounded-full font-medium hover:bg-gray-200 transition-colors"
+            className="btn-secondary border-voice-muted text-voice-text hover:border-terracotta hover:bg-voice-surface"
           >
             Stop Speaking
           </button>
@@ -712,7 +673,7 @@ export default function VoiceOverlay({
         {state === 'listening' && (
           <button
             onClick={stopListening}
-            className="px-6 py-3 bg-red-100 text-red-700 rounded-full font-medium hover:bg-red-200 transition-colors"
+            className="px-xl py-md bg-error/20 text-error rounded-md font-medium hover:bg-error/30 transition-all duration-base"
           >
             Cancel
           </button>
@@ -723,9 +684,9 @@ export default function VoiceOverlay({
       {typeof window !== 'undefined' &&
         !('webkitSpeechRecognition' in window) &&
         !('SpeechRecognition' in window) && (
-          <div className="absolute bottom-20 left-0 right-0 px-6">
-            <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-center">
-              <p className="text-amber-800 text-sm">
+          <div className="absolute bottom-24 left-xl right-xl">
+            <div className="bg-amber/20 border border-amber/30 rounded-md p-lg text-center">
+              <p className="text-amber text-body-sm">
                 Voice recognition requires Chrome, Edge, or Safari.
               </p>
             </div>
