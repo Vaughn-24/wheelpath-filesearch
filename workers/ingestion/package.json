@@ -1,0 +1,22 @@
+{
+  "name": "@wheelpath/worker-ingestion",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p ./tsconfig.json",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@google-cloud/aiplatform": "^5.13.0",
+    "@google-cloud/functions-framework": "^4.0.1",
+    "@google-cloud/storage": "^7.17.3",
+    "@google-cloud/vertexai": "^1.10.0",
+    "firebase-admin": "^13.6.0",
+    "pdf-parse": "^1.1.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

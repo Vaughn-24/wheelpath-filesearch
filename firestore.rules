@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /documents/{document} {
+      allow read, write: if request.auth != null;
+    }
+    match /chats/{chat} {
+      allow read, write: if request.auth != null;
+    }
+    match /documents/{document}/chunks/{chunk} {
+      allow read: if request.auth != null;
+    }
+  }
+}
+

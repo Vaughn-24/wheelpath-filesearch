@@ -1,0 +1,58 @@
+{
+  "name": "wheelpath-ai",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WheelPath AI monorepo (API, Web, Workers, Packages)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Vaughn-24/wheelpath2-ai.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "workers/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "prepare": "husky install",
+    "lint": "eslint .",
+    "format": "prettier --check .",
+    "format:fix": "prettier --write .",
+    "typecheck": "npm -ws run typecheck",
+    "test": "npm -ws run test",
+    "build": "npm -w packages/schemas run build && npm -w packages/types run build && npm -w packages/validation run build && npm -w apps/api run build && npm -w apps/web run build",
+    "codegen:types": "json2ts -i packages/schemas/rfi.schema.json -o packages/types/src/rfi.ts --banner \"// Generated from rfi.schema.json\"",
+    "codegen:zod": "zod-to-json-schema --from packages/validation/src/rfi.zod.ts --to packages/schemas/rfi.schema.json"
+  },
+  "lint-staged": {
+    "**/*.{ts,tsx,js,jsx}": [
+      "eslint --fix --max-warnings 0",
+      "prettier --write"
+    ],
+    "**/*.{json,md,yml,yaml}": [
+      "prettier --write"
+    ]
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^10.4.5",
+    "@types/jest": "^29.5.12",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "cross-env": "^7.0.3",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.1",
+    "husky": "^9.0.11",
+    "jest": "^29.7.0",
+    "json-schema-to-typescript": "^15.0.0",
+    "lint-staged": "^15.2.7",
+    "prettier": "^3.3.2",
+    "ts-jest": "^29.1.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3",
+    "zod-to-json-schema": "^3.23.5"
+  },
+  "packageManager": "pnpm@10.17.0+sha512.fce8a3dd29a4ed2ec566fb53efbb04d8c44a0f05bc6f24a73046910fb9c3ce7afa35a0980500668fa3573345bd644644fa98338fa168235c80f4aa17aa17fbef"
+}

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.next/
+.turbo/
+coverage/
+.DS_Store
+.env*
+!.env.example
+.husky/_/
+**/*.local.*
+
+
+
+wheelpath-ai/
+wheelpath-ai/
