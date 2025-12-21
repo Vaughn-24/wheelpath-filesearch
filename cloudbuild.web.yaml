@@ -3,7 +3,7 @@ steps:
   # NOTE: Firebase config values are passed as build-time substitutions
   # Set these in Cloud Build triggers or pass via --substitutions
   - name: 'gcr.io/cloud-builders/docker'
-    args:
+    args: 
       - 'build'
       - '-t'
       - 'us-central1-docker.pkg.dev/${PROJECT_ID}/docker-api/wheelpath-web:$COMMIT_SHA'
@@ -66,9 +66,9 @@ images:
 # Define substitution variables (set in Cloud Build trigger)
 substitutions:
   _API_URL: 'https://wheelpath-api-${PROJECT_NUMBER}.us-central1.run.app'
-  _FIREBASE_API_KEY: '' # Set in trigger
-  _FIREBASE_SENDER_ID: '' # Set in trigger
-  _FIREBASE_APP_ID: '' # Set in trigger
+  _FIREBASE_API_KEY: ''  # Set in trigger
+  _FIREBASE_SENDER_ID: ''  # Set in trigger
+  _FIREBASE_APP_ID: ''  # Set in trigger
 
 options:
   logging: CLOUD_LOGGING_ONLY

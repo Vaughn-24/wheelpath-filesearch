@@ -3,6 +3,9 @@ import { useState } from 'react';
 import { useAuth } from '../lib/auth';
 import { isDemoMode } from '../lib/firebase';
 
+// Cost protection: upload timeout (File Search indexing can take up to 2 min)
+const UPLOAD_TIMEOUT_MS = 150000; // 2.5 minutes
+
 export default function DocumentUploader() {
   const [uploading, setUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -30,6 +33,10 @@ export default function DocumentUploader() {
       const formData = new FormData();
       formData.append('file', file);
 
+      // AbortController for upload timeout (File Search indexing takes time)
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), UPLOAD_TIMEOUT_MS);
+
       const res = await fetch(`${apiUrl}/documents/upload`, {
         method: 'POST',
         headers: {
@@ -37,7 +44,10 @@ export default function DocumentUploader() {
           // Note: Don't set Content-Type header - browser sets it with boundary
         },
         body: formData,
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
@@ -51,7 +61,12 @@ export default function DocumentUploader() {
       window.dispatchEvent(new CustomEvent('document-uploaded'));
     } catch (err) {
       console.error(err);
-      const message = err instanceof Error ? err.message : 'Upload failed';
+      let message = 'Upload failed';
+      if (err instanceof Error) {
+        message = err.name === 'AbortError' 
+          ? 'Upload timed out. The file may still be processing - check back in a moment.'
+          : err.message;
+      }
       alert(message);
     } finally {
       setUploading(false);

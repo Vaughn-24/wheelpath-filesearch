@@ -22,8 +22,7 @@ interface TenantUsage {
   documentsUploaded: RateLimitEntry;
   totalStorageBytes: number;
   // Voice limits (tracked in voice.gateway.ts)
-  // API call tracking
-  embeddingCalls: RateLimitEntry;
+  // LLM API call tracking (embeddings handled by File Search)
   llmCalls: RateLimitEntry;
 }
 
@@ -42,8 +41,7 @@ export const RATE_LIMITS = {
   DOC_MAX_PAGES: parseInt(process.env.DOC_MAX_PAGES || '200'),
   STORAGE_PER_TENANT_MB: parseInt(process.env.STORAGE_PER_TENANT_MB || '500'),
 
-  // Embedding/LLM limits (shared across features)
-  EMBEDDING_CALLS_PER_HOUR: parseInt(process.env.EMBEDDING_CALLS_PER_HOUR || '200'),
+  // LLM limits (embeddings handled internally by File Search)
   LLM_CALLS_PER_HOUR: parseInt(process.env.LLM_CALLS_PER_HOUR || '100'),
 };
 
@@ -58,7 +56,6 @@ export class RateLimitService {
         chatQueries: { count: 0, resetAt: now + 3600000 },
         documentsUploaded: { count: 0, resetAt: now + 3600000 },
         totalStorageBytes: 0,
-        embeddingCalls: { count: 0, resetAt: now + 3600000 },
         llmCalls: { count: 0, resetAt: now + 3600000 },
       });
     }
@@ -168,32 +165,6 @@ export class RateLimitService {
   recordDocumentDeletion(tenantId: string, fileSizeBytes: number): void {
     const usage = this.getOrCreateUsage(tenantId);
     usage.totalStorageBytes = Math.max(0, usage.totalStorageBytes - fileSizeBytes);
-  }
-
-  /**
-   * Check embedding API limit
-   */
-  checkEmbeddingLimit(tenantId: string): { allowed: boolean; reason?: string } {
-    const usage = this.getOrCreateUsage(tenantId);
-    this.checkAndResetIfNeeded(usage.embeddingCalls);
-
-    if (usage.embeddingCalls.count >= RATE_LIMITS.EMBEDDING_CALLS_PER_HOUR) {
-      return {
-        allowed: false,
-        reason: `Embedding API limit reached. Please try again later.`,
-      };
-    }
-
-    return { allowed: true };
-  }
-
-  /**
-   * Record embedding API call
-   */
-  recordEmbeddingCall(tenantId: string): void {
-    const usage = this.getOrCreateUsage(tenantId);
-    this.checkAndResetIfNeeded(usage.embeddingCalls);
-    usage.embeddingCalls.count++;
   }
 
   /**
