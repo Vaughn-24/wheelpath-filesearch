@@ -1,5 +1,4 @@
 import {
-  Body,
   Controller,
   Delete,
   Get,
@@ -8,7 +7,20 @@ import {
   UseGuards,
   HttpException,
   HttpStatus,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+
+// Multer file type for TypeScript
+interface MulterFile {
+  fieldname: string;
+  originalname: string;
+  encoding: string;
+  mimetype: string;
+  size: number;
+  buffer: Buffer;
+}
 
 import { CurrentTenant } from '../tenant/tenant.decorator';
 import { JwtAuthGuard, TenantGuard } from '../tenant/tenant.guard';
@@ -20,7 +32,7 @@ import { RateLimitService, RATE_LIMITS } from '../common/rate-limit.service';
  * COST PROTECTIONS FOR DOCUMENTS:
  * ============================================================================
  * 1. Upload rate limiting: 10 uploads/hour per tenant
- * 2. Max documents per tenant: 50
+ * 2. Max documents per tenant: 100
  * 3. Max file size: 25MB
  * 4. Max storage per tenant: 500MB
  * 5. Allowed file types: PDF only
@@ -34,13 +46,35 @@ export class DocumentsController {
     private readonly rateLimitService: RateLimitService,
   ) {}
 
-  @Post('upload-url')
-  async getUploadUrl(
+  /**
+   * Upload a document directly to File Search Store
+   * POST /documents/upload
+   * Content-Type: multipart/form-data
+   */
+  @Post('upload')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: {
+        fileSize: 25 * 1024 * 1024, // 25MB max
+      },
+    }),
+  )
+  async uploadDocument(
     @CurrentTenant() tenantId: string,
-    @Body() body: { filename: string; contentType: string; fileSize?: number },
+    @UploadedFile() file: MulterFile,
   ) {
+    if (!file) {
+      throw new HttpException(
+        {
+          error: 'no_file',
+          message: 'No file uploaded',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+
     // === COST PROTECTION: Validate file type ===
-    if (!body.contentType?.includes('pdf')) {
+    if (!file.mimetype?.includes('pdf')) {
       throw new HttpException(
         {
           error: 'invalid_file_type',
@@ -56,10 +90,9 @@ export class DocumentsController {
     const currentDocCount = currentDocs.length;
 
     // === COST PROTECTION: Check upload limits ===
-    const fileSizeBytes = body.fileSize || 0;
     const uploadCheck = this.rateLimitService.checkDocumentUploadLimit(
       tenantId,
-      fileSizeBytes,
+      file.size,
       currentDocCount,
     );
 
@@ -82,17 +115,48 @@ export class DocumentsController {
       );
     }
 
-    // Record the upload
-    this.rateLimitService.recordDocumentUpload(tenantId, fileSizeBytes);
+    // Record the upload for rate limiting
+    this.rateLimitService.recordDocumentUpload(tenantId, file.size);
 
-    // Generate upload URL
-    const result = await this.documents.generateUploadUrl(tenantId, body.filename, body.contentType);
+    try {
+      // Upload to File Search Store
+      const document = await this.documents.uploadDocument(
+        tenantId,
+        file.buffer,
+        file.originalname,
+        file.mimetype,
+      );
 
-    // Return with usage info
-    return {
-      ...result,
-      usage: this.rateLimitService.getUsageStats(tenantId),
-    };
+      return {
+        document,
+        usage: this.rateLimitService.getUsageStats(tenantId),
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Upload failed';
+      throw new HttpException(
+        {
+          error: 'upload_failed',
+          message,
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Legacy endpoint for backward compatibility
+   * Returns an error directing to new upload endpoint
+   */
+  @Post('upload-url')
+  async getUploadUrl() {
+    throw new HttpException(
+      {
+        error: 'deprecated',
+        message:
+          'This endpoint is deprecated. Use POST /documents/upload with multipart/form-data instead.',
+      },
+      HttpStatus.GONE,
+    );
   }
 
   @Get()
@@ -112,7 +176,13 @@ export class DocumentsController {
   async getOne(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     const found = await this.documents.findOneByTenant(tenantId, id);
     if (!found) {
-      return { error: 'Not found' };
+      throw new HttpException(
+        {
+          error: 'not_found',
+          message: 'Document not found',
+        },
+        HttpStatus.NOT_FOUND,
+      );
     }
     return found;
   }
@@ -121,14 +191,19 @@ export class DocumentsController {
   async delete(@CurrentTenant() tenantId: string, @Param('id') id: string) {
     // Get file size before deletion to update storage tracking
     const doc = await this.documents.findOneByTenant(tenantId, id);
-    if (doc) {
-      // Estimate file size from stats if available, otherwise use 0
-      // In production, you'd store actual file size in Firestore
-      const estimatedSize = 1024 * 1024; // Default 1MB estimate
-      this.rateLimitService.recordDocumentDeletion(tenantId, estimatedSize);
+    if (!doc) {
+      throw new HttpException(
+        {
+          error: 'not_found',
+          message: 'Document not found',
+        },
+        HttpStatus.NOT_FOUND,
+      );
     }
 
+    this.rateLimitService.recordDocumentDeletion(tenantId, doc.sizeBytes || 0);
     await this.documents.deleteDocument(tenantId, id);
+
     return {
       success: true,
       usage: this.rateLimitService.getUsageStats(tenantId),

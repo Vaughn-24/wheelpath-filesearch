@@ -12,22 +12,18 @@ export function getSchema(docType: DocType) {
 
 // --- Firestore Data Models ---
 
-export type DocumentStatus = 'uploading' | 'processing' | 'ready' | 'error';
-
-export interface DocumentStats {
-  pageCount: number;
-  chunkCount: number;
-}
+export type DocumentStatus = 'uploading' | 'indexing' | 'ready' | 'error';
 
 export interface Document {
   id: string;
   tenantId: string;
   title: string;
-  gcsPath: string;       // "gs://bucket/user/file.pdf"
+  fileSearchDocumentName: string; // File Search document reference
   mimeType: string;
   status: DocumentStatus;
-  stats?: DocumentStats;
-  createdAt: string | Date; // Allow flexibility for client/server timestamps
+  sizeBytes: number;
+  createdAt: string | Date;
+  errorMessage?: string;
 }
 
 export interface Message {

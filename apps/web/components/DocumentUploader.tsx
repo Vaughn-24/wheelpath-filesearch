@@ -26,27 +26,33 @@ export default function DocumentUploader() {
       const token = await user.getIdToken();
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
-      const res = await fetch(`${apiUrl}/documents/upload-url`, {
+      // Use FormData for multipart upload directly to File Search
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${apiUrl}/documents/upload`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
+          // Note: Don't set Content-Type header - browser sets it with boundary
         },
-        body: JSON.stringify({ filename: file.name, contentType: file.type }),
+        body: formData,
       });
 
-      if (!res.ok) throw new Error('Failed to get upload URL');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || `Upload failed: ${res.status}`);
+      }
 
-      const { uploadUrl } = await res.json();
-
-      await fetch(uploadUrl, {
-        method: 'PUT',
-        body: file,
-        headers: { 'Content-Type': file.type },
-      });
+      const result = await res.json();
+      console.log('Document uploaded:', result.document?.title);
+      
+      // Trigger a refresh of the document list
+      window.dispatchEvent(new CustomEvent('document-uploaded'));
     } catch (err) {
       console.error(err);
-      alert('Upload failed');
+      const message = err instanceof Error ? err.message : 'Upload failed';
+      alert(message);
     } finally {
       setUploading(false);
     }

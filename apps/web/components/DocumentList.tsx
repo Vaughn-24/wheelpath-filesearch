@@ -9,15 +9,16 @@ interface DocumentListProps {
   onSelect?: (doc: Document) => void;
 }
 
-// Demo documents for preview mode
+// Demo documents for preview mode (using new File Search schema)
 const DEMO_DOCUMENTS: Document[] = [
   {
     id: 'demo-1',
     title: 'Project Specifications v2.3.pdf',
     tenantId: 'demo-user-123',
     status: 'ready',
-    gcsPath: 'demo/spec.pdf',
+    fileSearchDocumentName: 'fileSearchStores/demo/documents/spec',
     mimeType: 'application/pdf',
+    sizeBytes: 2048000, // ~2MB
     createdAt: new Date(Date.now() - 86400000).toISOString(),
   },
   {
@@ -25,17 +26,19 @@ const DEMO_DOCUMENTS: Document[] = [
     title: 'RFI-2024-0142 Foundation Review.pdf',
     tenantId: 'demo-user-123',
     status: 'ready',
-    gcsPath: 'demo/rfi.pdf',
+    fileSearchDocumentName: 'fileSearchStores/demo/documents/rfi',
     mimeType: 'application/pdf',
+    sizeBytes: 512000, // ~500KB
     createdAt: new Date(Date.now() - 172800000).toISOString(),
   },
   {
     id: 'demo-3',
     title: 'Structural Engineering Report.pdf',
     tenantId: 'demo-user-123',
-    status: 'processing',
-    gcsPath: 'demo/structural.pdf',
+    status: 'indexing',
+    fileSearchDocumentName: 'fileSearchStores/demo/documents/structural',
     mimeType: 'application/pdf',
+    sizeBytes: 3072000, // ~3MB
     createdAt: new Date(Date.now() - 259200000).toISOString(),
   },
   {
@@ -43,8 +46,9 @@ const DEMO_DOCUMENTS: Document[] = [
     title: 'Site Survey Results Q4.pdf',
     tenantId: 'demo-user-123',
     status: 'ready',
-    gcsPath: 'demo/survey.pdf',
+    fileSearchDocumentName: 'fileSearchStores/demo/documents/survey',
     mimeType: 'application/pdf',
+    sizeBytes: 1024000, // ~1MB
     createdAt: new Date(Date.now() - 604800000).toISOString(),
   },
 ];

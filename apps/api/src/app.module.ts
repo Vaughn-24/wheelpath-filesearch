@@ -8,16 +8,18 @@ import { DocumentsModule } from './documents/documents.module';
 import { RagModule } from './rag/rag.module';
 import { MetricsModule } from './metrics/metrics.module';
 import { VoiceModule } from './voice/voice.module';
+import { TenantModule } from './tenant/tenant.module';
 import { SchemasController } from './schemas/schemas.controller';
 import { RfiController } from './rfi/rfi.controller';
 import { InMemoryRfiRepository } from './rfi/rfi.repository';
 
 @Module({
+  // TenantModule provides File Search Store management (global)
   // CommonModule provides shared rate limiting across all features
   // VoiceModule is isolated - uses WebSocket on /voice namespace
   // RagModule handles HTTP /chat/stream
   // DocumentsModule handles uploads/viewing
-  imports: [CommonModule, AuthModule, DocumentsModule, RagModule, MetricsModule, VoiceModule],
+  imports: [TenantModule, CommonModule, AuthModule, DocumentsModule, RagModule, MetricsModule, VoiceModule],
   controllers: [AppController, MeController, SchemasController, RfiController],
   providers: [InMemoryRfiRepository],
 })

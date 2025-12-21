@@ -1,12 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import * as aiplatform from '@google-cloud/aiplatform';
-import * as admin from 'firebase-admin';
+import { GoogleGenAI } from '@google/genai';
+
 import { MetricsService } from '../metrics/metrics.service';
+import { TenantService } from '../tenant/tenant.service';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * VoiceService - Isolated service for voice agent functionality
- * 
+ * VoiceService - Voice agent using File Search API
+ *
  * This service is SEPARATE from RagService to ensure:
  * 1. No interference with existing chat functionality
  * 2. Voice-optimized prompt construction (concise, no citations)
@@ -14,161 +16,33 @@ import { MetricsService } from '../metrics/metrics.service';
  */
 @Injectable()
 export class VoiceService {
-  private genAI: GoogleGenerativeAI | null = null;
-  private model: any;
-  private predictionClient: aiplatform.v1.PredictionServiceClient;
-  private firestore: admin.firestore.Firestore;
-  
-  private project = process.env.GCP_PROJECT || 'wheelpath-ai-dev';
-  private location = process.env.GCP_LOCATION || 'us-central1';
-  private indexEndpointId = process.env.VERTEX_INDEX_ENDPOINT_ID;
-  private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;
-  private publicEndpointDomain = process.env.VERTEX_PUBLIC_ENDPOINT_DOMAIN;
+  private ai: GoogleGenAI | null = null;
 
-  constructor(private readonly metricsService: MetricsService) {
+  // Model for voice (uses File Search)
+  private readonly MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+
+  constructor(
+    private readonly metricsService: MetricsService,
+    private readonly tenantService: TenantService,
+  ) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
-      this.genAI = new GoogleGenerativeAI(apiKey);
-      // Use Gemini 3 Pro for high-quality voice responses
-      // Can be overridden with GEMINI_VOICE_MODEL env var
-      const voiceModel = process.env.GEMINI_VOICE_MODEL || 'gemini-3-pro-preview';
-      this.model = this.genAI.getGenerativeModel({ model: voiceModel });
-      console.log(`VoiceService: Initialized Gemini 3 (${voiceModel})`);
+      this.ai = new GoogleGenAI({ apiKey });
+      console.log(`VoiceService: Initialized with File Search (model: ${this.MODEL})`);
     } else {
       console.warn('VoiceService: GEMINI_API_KEY not set');
     }
-    
-    this.predictionClient = new aiplatform.v1.PredictionServiceClient({
-      apiEndpoint: `${this.location}-aiplatform.googleapis.com`
-    });
-
-    if (!admin.apps.length) {
-      admin.initializeApp();
-    }
-    this.firestore = admin.firestore();
-  }
-
-  /**
-   * Retrieve context chunks for a tenant/document (shared logic with RAG)
-   */
-  private async retrieveContext(tenantId: string, documentId: string, query: string): Promise<string> {
-    const hasVectorSearch = this.indexEndpointId && this.deployedIndexId && this.publicEndpointDomain;
-    if (!hasVectorSearch) return '';
-
-    let filter: any = null;
-    if (documentId === 'all') {
-      const docsSnapshot = await this.firestore.collection('documents')
-        .where('tenantId', '==', tenantId)
-        .select('id')
-        .get();
-      const docIds = docsSnapshot.docs.map(d => d.id);
-      if (docIds.length > 0) {
-        filter = { namespace: 'documentId', allowList: docIds };
-      }
-    } else {
-      filter = { namespace: 'documentId', allowList: [documentId] };
-    }
-
-    // Embed query
-    let embedding: number[] = [];
-    try {
-      const endpoint = `projects/${this.project}/locations/${this.location}/publishers/google/models/text-embedding-004`;
-      const instanceValue = {
-        structValue: {
-          fields: {
-            content: { stringValue: query }
-          }
-        }
-      };
-      
-      const [response] = await this.predictionClient.predict({
-        endpoint,
-        instances: [instanceValue as any],
-      });
-
-      const predictions = response.predictions;
-      if (predictions && predictions.length > 0) {
-        const embeddingValue = predictions[0].structValue?.fields?.embeddings?.structValue?.fields?.values?.listValue?.values;
-        if (embeddingValue) {
-          embedding = embeddingValue.map((v: any) => v.numberValue || 0);
-        }
-      }
-    } catch (error: any) {
-      console.error('VoiceService: Embedding failed:', error.message);
-      return '';
-    }
-
-    if (embedding.length === 0) return '';
-
-    // Vector search
-    try {
-      const neighbors = await this.findNeighbors(embedding, filter);
-      const chunkRefs = neighbors.map((n: any) => {
-        if (!n.datapoint?.datapointId) return null;
-        const parts = n.datapoint.datapointId.split('_');
-        const chunkIndex = parts[parts.length - 1];
-        const docIdFromVector = parts.slice(0, -1).join('_');
-        return this.firestore.collection('documents').doc(docIdFromVector).collection('chunks').doc(chunkIndex);
-      }).filter(Boolean) as admin.firestore.DocumentReference[];
-
-      if (chunkRefs.length > 0) {
-        const chunkSnaps = await this.firestore.getAll(...chunkRefs);
-        const texts = chunkSnaps.map(snap => snap.data()?.text || '').filter(Boolean);
-        return texts.join('\n\n');
-      }
-    } catch (error: any) {
-      console.error('VoiceService: Vector search failed:', error.message);
-    }
-
-    return '';
-  }
-
-  private async findNeighbors(embedding: number[], filter: any): Promise<any[]> {
-    const url = `https://${this.publicEndpointDomain}/v1/projects/${this.project}/locations/${this.location}/indexEndpoints/${this.indexEndpointId}:findNeighbors`;
-    
-    const { GoogleAuth } = require('google-auth-library');
-    const auth = new GoogleAuth();
-    const client = await auth.getClient();
-    const accessToken = await client.getAccessToken();
-    
-    const body = {
-      deployedIndexId: this.deployedIndexId,
-      queries: [{
-        datapoint: {
-          featureVector: embedding,
-          restricts: filter ? [filter] : []
-        },
-        neighborCount: 3 // Fewer chunks for voice (conciseness)
-      }],
-      returnFullDatapoint: false
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      throw new Error(`Vector Search failed: ${response.status}`);
-    }
-
-    const result = await response.json();
-    return result.nearestNeighbors?.[0]?.neighbors || [];
   }
 
   /**
    * WheelPath Voice Profile - System Prompt
-   * 
-   * Core Identity: The calm, experienced field mentor who understands 
+   *
+   * Core Identity: The calm, experienced field mentor who understands
    * construction documents, project realities, and trade contractor workloads.
-   * 
+   *
    * Tagline: "Get Clarity. Go Build."
    */
-  private buildVoiceSystemPrompt(context: string): string {
+  private buildVoiceSystemPrompt(hasDocuments: boolean): string {
     const voiceProfile = `You are WheelPath Voice — the calm, experienced field mentor for construction professionals.
 
 CORE IDENTITY:
@@ -225,15 +99,13 @@ SUCCESS CRITERIA:
 Remember: Every response should produce clarity and confidence — not more tasks.
 Tagline encoded into tone: "Get Clarity. Go Build."`;
 
-    if (context) {
+    if (hasDocuments) {
       return `${voiceProfile}
 
-PROJECT CONTEXT (from user's documents):
-${context}
-
-Answer the user's question using ONLY the context above. If the answer isn't in the context, say "I don't have that information in your documents yet. Want me to help you find it another way?"`;
+The system automatically retrieves relevant context from the user's project documents using File Search.
+Answer the user's question using the retrieved context. If the answer isn't available, say "I don't have that information in your documents yet."`;
     }
-    
+
     return `${voiceProfile}
 
 NOTE: The user hasn't uploaded project documents yet. 
@@ -247,44 +119,67 @@ NOTE: The user hasn't uploaded project documents yet.
    * This is used for Speech-to-Text -> LLM -> Text-to-Speech flow
    */
   async processVoiceQuery(
-    tenantId: string, 
-    documentId: string, 
-    transcribedText: string
+    tenantId: string,
+    documentId: string,
+    transcribedText: string,
   ): Promise<string> {
-    if (!this.model) {
-      return "Voice service is being configured. Please try again shortly.";
+    if (!this.ai) {
+      return 'Voice service is being configured. Please try again shortly.';
     }
 
-    // Retrieve context (same RAG logic, isolated execution)
-    const context = await this.retrieveContext(tenantId, documentId, transcribedText);
-    
+    // Check if tenant has a File Search store
+    const storeName = await this.tenantService.getFileSearchStore(tenantId);
+    const hasDocuments = !!storeName;
+
     // Build voice-optimized prompt
-    const systemPrompt = this.buildVoiceSystemPrompt(context);
+    const systemInstruction = this.buildVoiceSystemPrompt(hasDocuments);
 
-    // Single-turn generation (no history for voice - reduces latency)
-    const chatHistory = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Understood. I am WheelPath Voice — calm, clear, and grounded in the data. Ready to help.' }] },
-    ];
-    
-    const chat = this.model.startChat({ history: chatHistory });
-    const result = await chat.sendMessage(transcribedText);
-    const response = result.response;
-    const text = response.text();
+    // Prepare config
+    const config: any = {
+      systemInstruction,
+      generationConfig: {
+        maxOutputTokens: 500, // Shorter for voice
+      },
+    };
 
-    // Track metrics (non-blocking)
-    this.metricsService.track({
-      type: 'voice_query',
-      tenantId,
-      documentId: documentId === 'all' ? undefined : documentId,
-      metadata: {
-        queryLength: transcribedText.length,
-        responseLength: text.length,
-        hasContext: context.length > 0
-      }
-    }).catch(err => console.warn('Voice metrics failed:', err.message));
+    // Add File Search tool if tenant has documents
+    if (storeName) {
+      config.tools = [
+        {
+          fileSearch: {
+            fileSearchStoreNames: [storeName],
+          },
+        },
+      ];
+    }
 
-    return text;
+    try {
+      const response = await this.ai.models.generateContent({
+        model: this.MODEL,
+        contents: [{ role: 'user', parts: [{ text: transcribedText }] }],
+        config,
+      });
+
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text || 'I could not process that. Please try again.';
+
+      // Track metrics (non-blocking)
+      this.metricsService
+        .track({
+          type: 'voice_query',
+          tenantId,
+          documentId: documentId === 'all' ? undefined : documentId,
+          metadata: {
+            queryLength: transcribedText.length,
+            responseLength: text.length,
+          },
+        })
+        .catch((err: Error) => console.warn('Voice metrics failed:', err.message));
+
+      return text;
+    } catch (error: any) {
+      console.error('VoiceService: Generation failed:', error.message);
+      return 'I ran into a temporary issue. Please try again in a moment.';
+    }
   }
 
   /**
@@ -292,31 +187,53 @@ NOTE: The user hasn't uploaded project documents yet.
    */
   async *streamVoiceResponse(
     tenantId: string,
-    documentId: string,
-    transcribedText: string
+    _documentId: string, // Unused but kept for API compatibility
+    transcribedText: string,
   ): AsyncGenerator<string> {
-    if (!this.model) {
-      yield "Voice service is being configured.";
+    if (!this.ai) {
+      yield 'Voice service is being configured.';
       return;
     }
 
-    const context = await this.retrieveContext(tenantId, documentId, transcribedText);
-    const systemPrompt = this.buildVoiceSystemPrompt(context);
+    // Check if tenant has a File Search store
+    const storeName = await this.tenantService.getFileSearchStore(tenantId);
+    const hasDocuments = !!storeName;
 
-    const chatHistory = [
-      { role: 'user', parts: [{ text: systemPrompt }] },
-      { role: 'model', parts: [{ text: 'Understood. I am WheelPath Voice — calm, clear, and grounded in the data. Ready to help.' }] },
-    ];
-    
-    const chat = this.model.startChat({ history: chatHistory });
-    const result = await chat.sendMessageStream(transcribedText);
+    const systemInstruction = this.buildVoiceSystemPrompt(hasDocuments);
 
-    for await (const chunk of result.stream) {
-      const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) {
-        yield text;
+    const config: any = {
+      systemInstruction,
+      generationConfig: {
+        maxOutputTokens: 500,
+      },
+    };
+
+    if (storeName) {
+      config.tools = [
+        {
+          fileSearch: {
+            fileSearchStoreNames: [storeName],
+          },
+        },
+      ];
+    }
+
+    try {
+      const response = await this.ai.models.generateContentStream({
+        model: this.MODEL,
+        contents: [{ role: 'user', parts: [{ text: transcribedText }] }],
+        config,
+      });
+
+      for await (const chunk of response) {
+        const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          yield text;
+        }
       }
+    } catch (error: any) {
+      console.error('VoiceService: Stream failed:', error.message);
+      yield 'I ran into a temporary issue. Please try again.';
     }
   }
 }
-

@@ -12,11 +12,15 @@ interface ChatContainerProps {
   onSaveChat?: (title: string, messageCount: number) => void;
 }
 
+// Citation format from File Search groundingMetadata
 interface Citation {
   index: number;
-  pageNumber: number;
-  text: string;
-  documentId: string;
+  title: string;      // Document name from File Search
+  uri: string;        // File Search document URI
+  // Legacy fields for backward compatibility
+  pageNumber?: number;
+  text?: string;
+  documentId?: string;
 }
 
 interface RateLimitInfo {
@@ -137,7 +141,10 @@ export default function ChatContainer({
   }, []);
 
   const handleCitationClick = async (citation: Citation) => {
-    setPage(citation.pageNumber);
+    // File Search citations may not have page numbers
+    if (citation.pageNumber !== undefined) {
+      setPage(citation.pageNumber);
+    }
     setShowPdf(true);
     if (isDemo || isDemoMode) return;
 
@@ -184,8 +191,8 @@ export default function ChatContainer({
     // Demo mode
     if (isDemo || isDemoMode) {
       setCitations([
-        { index: 1, pageNumber: 3, text: 'Section 4.2.1', documentId: 'demo-1' },
-        { index: 2, pageNumber: 7, text: 'Appendix B', documentId: 'demo-2' },
+        { index: 1, title: 'Project Specifications', uri: 'demo://doc/1', pageNumber: 3, text: 'Section 4.2.1', documentId: 'demo-1' },
+        { index: 2, title: 'Engineering Report', uri: 'demo://doc/2', pageNumber: 7, text: 'Appendix B', documentId: 'demo-2' },
       ]);
 
       const demoResponse = DEMO_RESPONSES[Math.floor(Math.random() * DEMO_RESPONSES.length)];
@@ -337,9 +344,10 @@ export default function ChatContainer({
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const SpeechRecognitionAPI =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    /* eslint-enable @typescript-eslint/no-explicit-any */
     const recognition = new SpeechRecognitionAPI();
     recognition.continuous = false;
     recognition.interimResults = true;

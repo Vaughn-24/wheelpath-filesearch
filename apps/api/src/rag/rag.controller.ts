@@ -108,7 +108,11 @@ export class RagController {
       const maxResponseChars = RATE_LIMITS.CHAT_RESPONSE_MAX_TOKENS * 4; // ~4 chars per token
 
       for await (const item of stream) {
-        const text = item.candidates[0]?.content?.parts?.[0]?.text;
+        // Type assertion for dynamic stream items
+        const streamItem = item as { candidates?: { content?: { parts?: { text?: string }[] } }[]; citations?: unknown[] };
+
+        // Handle text chunks
+        const text = streamItem.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           totalResponseLength += text.length;
 
@@ -120,6 +124,11 @@ export class RagController {
           }
 
           res.write(`data: ${JSON.stringify({ text })}\n\n`);
+        }
+
+        // Handle citation updates from File Search groundingMetadata
+        if (streamItem.citations && streamItem.citations.length > 0) {
+          res.write(`data: ${JSON.stringify({ citations: streamItem.citations })}\n\n`);
         }
       }
       res.write('data: [DONE]\n\n');
