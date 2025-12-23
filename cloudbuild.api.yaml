@@ -4,9 +4,9 @@ steps:
     args:
       - 'build'
       - '-t'
-      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:$COMMIT_SHA'
       - '-t'
-      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest'
+      - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:latest'
       - '-f'
       - 'Dockerfile.api'
       - '.'
@@ -14,10 +14,10 @@ steps:
   # Push the image
   - name: 'gcr.io/cloud-builders/docker'
     args:
-      ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA']
+      ['push', 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:$COMMIT_SHA']
 
   - name: 'gcr.io/cloud-builders/docker'
-    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest']
+    args: ['push', 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:latest']
 
   # Deploy to Cloud Run
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -27,7 +27,7 @@ steps:
       - 'deploy'
       - 'wheelpath-api'
       - '--image'
-      - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
+      - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:$COMMIT_SHA'
       - '--region'
       - 'us-central1'
       - '--platform'
@@ -43,13 +43,13 @@ steps:
       - '10'
       - '--session-affinity'
       - '--set-env-vars'
-      - 'GCP_PROJECT=wheelpath-ai-dev,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_API_KEY=AIzaSyBy52T2piFsYgIcGEytxMq6E9of9YGnkus,GEMINI_VOICE_MODEL=gemini-3-pro-preview'
+      - 'GCP_PROJECT=wheelpath-filesearch,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_API_KEY=AIzaSyBy52T2piFsYgIcGEytxMq6E9of9YGnkus,GEMINI_VOICE_MODEL=gemini-3-pro-preview'
       - '--update-secrets'
       - 'ADMIN_API_KEY=ADMIN_API_KEY:latest'
 
 images:
-  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:$COMMIT_SHA'
-  - 'us-central1-docker.pkg.dev/wheelpath-ai-dev/docker-api/wheelpath-api:latest'
+  - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:$COMMIT_SHA'
+  - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY

@@ -6,7 +6,7 @@
 | ---------------- | ------------------------------------------------------ | --------- |
 | **Web Frontend** | https://wheelpath-web-l2phyyl55q-uc.a.run.app          | ✅ Live   |
 | **API Backend**  | https://wheelpath-api-945257727887.us-central1.run.app | ✅ Live   |
-| **GCP Project**  | `wheelpath-ai-dev`                                     | ✅ Active |
+| **GCP Project**  | `wheelpath-filesearch`                                 | ✅ Active |
 
 ---
 
@@ -390,7 +390,7 @@ gcloud builds submit --config=cloudbuild.web.yaml .
 
 | Variable                        | Description                                             |
 | ------------------------------- | ------------------------------------------------------- |
-| `GCP_PROJECT`                   | `wheelpath-ai-dev`                                      |
+| `GCP_PROJECT`                   | `wheelpath-filesearch`                                  |
 | `GCP_LOCATION`                  | `us-central1`                                           |
 | `GCS_BUCKET_NAME`               | `wheelpath-uploads-dev`                                 |
 | `GEMINI_API_KEY`                | Google AI API key                                       |

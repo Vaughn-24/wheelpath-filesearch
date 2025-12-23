@@ -1,6 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 import { useAuth } from '../lib/auth';
+import {
+  getUserMedia,
+  createAudioContext,
+  audioBufferToPCM16,
+  pcm16ToBase64,
+  base64ToPCM16,
+  pcm24ToAudioBuffer,
+} from '../lib/audio-utils';
 
 type VoiceState =
   | 'idle'
@@ -56,12 +64,21 @@ export default function VoiceOverlay({
     'connected' | 'disconnected' | 'connecting'
   >('disconnected');
   const [rateLimitMessage, setRateLimitMessage] = useState<string | null>(null);
+  const [useLiveAPI] = useState(
+    process.env.NEXT_PUBLIC_USE_LIVE_API === 'true' || false
+  );
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const socketRef = useRef<ReturnType<typeof import('socket.io-client').io> | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
+
+  // Live API audio capture refs
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioProcessorRef = useRef<ScriptProcessorNode | null>(null);
+  const isLiveSessionActiveRef = useRef(false);
 
   const audioQueueRef = useRef<AudioChunk[]>([]);
   const isPlayingRef = useRef(false);
@@ -206,6 +223,45 @@ export default function VoiceOverlay({
           }
         });
 
+        // Live API event handlers
+        socket.on('liveSessionReady', (data: { documentId: string }) => {
+          console.log('[Live API] Session ready', data);
+          setState('listening');
+          if (useLiveAPI) {
+            startMicrophoneCapture();
+          }
+        });
+
+        socket.on('liveAudio', async (data: { audio: string; format: string; sampleRate?: number }) => {
+          console.log('[Live API] Received audio chunk');
+          setState('speaking');
+          await playPCMAudio(data.audio, data.sampleRate || 24000);
+        });
+
+        socket.on('liveFunctionCall', (data: { name: string; args: any }) => {
+          console.log('[Live API] Function call:', data.name, data.args);
+          setState('processing');
+        });
+
+        socket.on('liveError', (data: { message: string }) => {
+          console.error('[Live API] Error:', data.message);
+          setError(data.message);
+          setState('error');
+          stopMicrophoneCapture();
+        });
+
+        socket.on('liveDisconnected', () => {
+          console.log('[Live API] Disconnected');
+          stopMicrophoneCapture();
+          setState('idle');
+        });
+
+        socket.on('liveSessionStopped', () => {
+          console.log('[Live API] Session stopped');
+          stopMicrophoneCapture();
+          setState('idle');
+        });
+
         socketRef.current = socket;
       } catch (err: unknown) {
         console.error('Socket connection failed:', err);
@@ -219,25 +275,164 @@ export default function VoiceOverlay({
 
     return () => {
       if (socketRef.current) {
+        if (useLiveAPI && isLiveSessionActiveRef.current) {
+          socketRef.current.emit('stopLiveSession');
+        }
         socketRef.current.disconnect();
         socketRef.current = null;
       }
       stopListening();
+      stopMicrophoneCapture();
       stopSpeaking();
       if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
       if (listeningTimeoutRef.current) clearTimeout(listeningTimeoutRef.current);
       if (idleWarningTimeoutRef.current) clearTimeout(idleWarningTimeoutRef.current);
       if (autoCloseTimeoutRef.current) clearTimeout(autoCloseTimeoutRef.current);
     };
-  }, [isOpen, user, documentId, onClose, resetIdleTimers]);
+  }, [isOpen, user, documentId, onClose, resetIdleTimers, useLiveAPI]);
 
   useEffect(() => {
     if (socketRef.current && documentId) {
-      socketRef.current.emit('setDocument', { documentId });
+      if (useLiveAPI && isLiveSessionActiveRef.current) {
+        // Restart Live API session with new document
+        socketRef.current.emit('stopLiveSession');
+        setTimeout(() => {
+          socketRef.current?.emit('startLiveSession', { documentId });
+        }, 100);
+      } else {
+        socketRef.current.emit('setDocument', { documentId });
+      }
     }
-  }, [documentId]);
+  }, [documentId, useLiveAPI]);
+
+  // Start Live API session when authenticated
+  useEffect(() => {
+    if (
+      useLiveAPI &&
+      socketRef.current &&
+      connectionStatus === 'connected' &&
+      state === 'idle' &&
+      !isLiveSessionActiveRef.current
+    ) {
+      console.log('[Live API] Starting session...');
+      socketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
+      isLiveSessionActiveRef.current = true;
+    }
+  }, [useLiveAPI, connectionStatus, state, documentId]);
+
+  /**
+   * Start microphone capture for Live API
+   */
+  const startMicrophoneCapture = useCallback(async () => {
+    if (!useLiveAPI || !socketRef.current) return;
+
+    try {
+      const stream = await getUserMedia();
+      if (!stream) {
+        setError('Failed to access microphone');
+        setState('error');
+        return;
+      }
+
+      const audioContext = createAudioContext();
+      if (!audioContext) {
+        setError('Failed to create audio context');
+        setState('error');
+        return;
+      }
+
+      audioContextRef.current = audioContext;
+      mediaStreamRef.current = stream;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      // Use ScriptProcessorNode for audio processing (deprecated but widely supported)
+      // For production, consider using AudioWorkletNode
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+      processor.onaudioprocess = async (e) => {
+        if (!isLiveSessionActiveRef.current || !socketRef.current) return;
+
+        try {
+          const audioBuffer = e.inputBuffer;
+          const pcm16 = await audioBufferToPCM16(audioBuffer, 16000);
+          const base64 = pcm16ToBase64(pcm16);
+
+          socketRef.current.emit('sendLiveAudio', { audio: base64 });
+        } catch (err) {
+          console.error('[Live API] Error processing audio:', err);
+        }
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      audioProcessorRef.current = processor;
+
+      console.log('[Live API] Microphone capture started');
+    } catch (err: any) {
+      console.error('[Live API] Failed to start microphone:', err);
+      setError('Failed to start microphone');
+      setState('error');
+    }
+  }, [useLiveAPI]);
+
+  /**
+   * Stop microphone capture
+   */
+  const stopMicrophoneCapture = useCallback(() => {
+    if (audioProcessorRef.current) {
+      audioProcessorRef.current.disconnect();
+      audioProcessorRef.current = null;
+    }
+
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach((track) => track.stop());
+      mediaStreamRef.current = null;
+    }
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(console.error);
+      audioContextRef.current = null;
+    }
+
+    isLiveSessionActiveRef.current = false;
+    console.log('[Live API] Microphone capture stopped');
+  }, []);
+
+  /**
+   * Play PCM audio from Live API
+   */
+  const playPCMAudio = useCallback(async (base64Audio: string, sampleRate: number = 24000) => {
+    try {
+      const pcm24 = base64ToPCM16(base64Audio);
+      const audioBuffer = pcm24ToAudioBuffer(pcm24, sampleRate);
+      const audioContext = new AudioContext({ sampleRate });
+
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContext.destination);
+
+      source.onended = () => {
+        audioContext.close();
+        if (state === 'speaking') {
+          setState('idle');
+        }
+      };
+
+      source.start(0);
+    } catch (err) {
+      console.error('[Live API] Failed to play PCM audio:', err);
+      setState('idle');
+    }
+  }, [state]);
 
   const startListening = useCallback(() => {
+    // If using Live API, microphone is already capturing
+    if (useLiveAPI) {
+      setState('listening');
+      resetIdleTimers();
+      return;
+    }
+
     if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
       setError('Speech recognition not supported in this browser');
       setState('error');
@@ -330,7 +525,7 @@ export default function VoiceOverlay({
 
     recognitionRef.current = recognition;
     recognition.start();
-  }, [state, resetIdleTimers]);
+  }, [state, resetIdleTimers, useLiveAPI]);
 
   const stopListening = useCallback(() => {
     if (silenceTimeoutRef.current) clearTimeout(silenceTimeoutRef.current);
@@ -465,25 +660,49 @@ export default function VoiceOverlay({
   const handleMainAction = () => {
     resetIdleTimers();
 
-    if (state === 'listening') {
-      stopListening();
-    } else if (state === 'speaking') {
-      stopSpeaking();
-      setState('idle');
-    } else if (state === 'idle') {
-      startListening();
-    } else if (state === 'error' || state === 'rateLimited') {
-      setState('idle');
-      setError(null);
-      setRateLimitMessage(null);
+    if (useLiveAPI) {
+      // Live API mode: toggle listening/speaking
+      if (state === 'listening') {
+        stopMicrophoneCapture();
+        setState('idle');
+      } else if (state === 'speaking') {
+        stopSpeaking();
+        setState('idle');
+      } else if (state === 'idle') {
+        startMicrophoneCapture();
+        setState('listening');
+      } else if (state === 'error' || state === 'rateLimited') {
+        setState('idle');
+        setError(null);
+        setRateLimitMessage(null);
+      }
+    } else {
+      // Legacy mode
+      if (state === 'listening') {
+        stopListening();
+      } else if (state === 'speaking') {
+        stopSpeaking();
+        setState('idle');
+      } else if (state === 'idle') {
+        startListening();
+      } else if (state === 'error' || state === 'rateLimited') {
+        setState('idle');
+        setError(null);
+        setRateLimitMessage(null);
+      }
     }
   };
 
   const handleClose = () => {
     stopListening();
+    stopMicrophoneCapture();
     stopSpeaking();
     if (socketRef.current) {
-      socketRef.current.emit('voiceCancel');
+      if (useLiveAPI && isLiveSessionActiveRef.current) {
+        socketRef.current.emit('stopLiveSession');
+      } else {
+        socketRef.current.emit('voiceCancel');
+      }
     }
     onClose();
   };
@@ -533,7 +752,14 @@ export default function VoiceOverlay({
       {/* Header */}
       <div className="flex items-center justify-between p-xl">
         <div>
-          <h2 className="text-heading font-medium text-voice-text">Voice Mode</h2>
+          <div className="flex items-center gap-sm">
+            <h2 className="text-heading font-medium text-voice-text">Voice Mode</h2>
+            {useLiveAPI && (
+              <span className="px-sm py-xs bg-terracotta/20 text-terracotta text-caption rounded">
+                Live API
+              </span>
+            )}
+          </div>
           <p className="text-body-sm text-voice-muted truncate max-w-[200px]">
             {documentTitle || 'All Documents'}
           </p>

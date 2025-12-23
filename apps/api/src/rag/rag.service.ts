@@ -15,7 +15,7 @@ export class RagService {
   private predictionClient: aiplatform.v1.PredictionServiceClient;
   private firestore: admin.firestore.Firestore;
 
-  private project = process.env.GCP_PROJECT || 'wheelpath-ai-dev';
+  private project = process.env.GCP_PROJECT || 'wheelpath-filesearch';
   private location = process.env.GCP_LOCATION || 'us-central1';
   private indexEndpointId = process.env.VERTEX_INDEX_ENDPOINT_ID;
   private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;

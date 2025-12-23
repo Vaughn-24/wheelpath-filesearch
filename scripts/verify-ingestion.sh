@@ -3,7 +3,7 @@
 
 set -e
 
-PROJECT_ID="wheelpath-ai-dev"
+PROJECT_ID="wheelpath-filesearch"
 REGION="us-central1"
 BUCKET="wheelpath-uploads-dev"
 INDEX_ID="370783908188389376"

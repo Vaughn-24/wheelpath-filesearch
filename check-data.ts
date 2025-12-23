@@ -4,7 +4,7 @@ import { getFirestore } from 'firebase-admin/firestore';
 
 // Use default credentials (from gcloud auth login)
 initializeApp({
-    projectId: 'wheelpath-ai-dev'
+    projectId: 'wheelpath-filesearch'
 });
 
 const db = getFirestore();

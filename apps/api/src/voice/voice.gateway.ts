@@ -12,6 +12,7 @@ import * as admin from 'firebase-admin';
 import { Server, Socket } from 'socket.io';
 
 import { VoiceService } from './voice.service';
+import { VoiceLiveService } from './voice-live.service';
 
 /**
  * ============================================================================
@@ -95,7 +96,10 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private tenantSessionCounts = new Map<string, number>();
   private ttsClient: TextToSpeechClient;
 
-  constructor(private readonly voiceService: VoiceService) {
+  constructor(
+    private readonly voiceService: VoiceService,
+    private readonly voiceLiveService: VoiceLiveService,
+  ) {
     this.ttsClient = new TextToSpeechClient();
 
     // Periodic cleanup of stale sessions (every 5 minutes)
@@ -353,6 +357,9 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(client: Socket) {
     console.log(`Voice client disconnected: ${client.id}`);
+    // Cleanup Live API session if exists
+    this.voiceLiveService.closeSession(client.id).catch(console.error);
+    // Cleanup regular session
     this.cleanupSession(client.id);
   }
 
@@ -545,4 +552,119 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       client.emit('voiceCancelled', { reason: 'User cancelled' });
     }
   }
+
+  /**
+   * ============================================================================
+   * GEMINI LIVE API HANDLERS (New Audio-Native Implementation)
+   * ============================================================================
+   */
+
+  @SubscribeMessage('startLiveSession')
+  async handleStartLiveSession(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { documentId?: string },
+  ) {
+    const session = this.sessions.get(client.id);
+    if (!session) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+
+    this.resetIdleTimeout(client, session);
+    const documentId = data.documentId || session.documentId || 'all';
+
+    console.log(`[VoiceLive] Starting Live API session for ${client.id}, document: ${documentId}`);
+
+    const result = await this.voiceLiveService.createLiveSession(
+      client.id,
+      session.tenantId,
+      documentId,
+    );
+
+    if (!result.success) {
+      client.emit('liveError', { message: result.error || 'Failed to start Live API session' });
+      return;
+    }
+
+    // Set up message forwarding from Gemini Live API to client
+    const geminiWs = this.voiceLiveService.getSession(client.id);
+    if (geminiWs) {
+      geminiWs.on('message', (data: WebSocket.Data) => {
+        try {
+          const message = JSON.parse(data.toString());
+
+          // Forward audio responses to client
+          if (message.serverContent?.modelTurn?.parts) {
+            for (const part of message.serverContent.modelTurn.parts) {
+              if (part.inlineData?.mimeType === 'audio/pcm') {
+                // Send raw PCM audio to client
+                client.emit('liveAudio', {
+                  audio: part.inlineData.data, // Base64 encoded PCM
+                  format: 'pcm',
+                  sampleRate: 24000, // Gemini Live outputs 24kHz
+                });
+              }
+            }
+          }
+
+          // Forward function call requests (for debugging)
+          if (message.serverContent?.modelTurn?.parts) {
+            for (const part of message.serverContent.modelTurn.parts) {
+              if (part.functionCall) {
+                client.emit('liveFunctionCall', {
+                  name: part.functionCall.name,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  args: part.functionCall.args as any,
+                });
+              }
+            }
+          }
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : 'Unknown error';
+          console.error(`[VoiceLive] Error forwarding message:`, message);
+        }
+      });
+
+      geminiWs.on('error', (error) => {
+        console.error(`[VoiceLive] Gemini WebSocket error:`, error);
+        client.emit('liveError', { message: 'Connection error' });
+      });
+
+      geminiWs.on('close', () => {
+        console.log(`[VoiceLive] Gemini WebSocket closed for ${client.id}`);
+        client.emit('liveDisconnected');
+      });
+    }
+
+    client.emit('liveSessionReady', { documentId });
+  }
+
+  @SubscribeMessage('sendLiveAudio')
+  async handleSendLiveAudio(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() data: { audio: string }, // Base64 encoded PCM audio
+  ) {
+    const session = this.sessions.get(client.id);
+    if (!session) {
+      client.emit('error', { message: 'Not authenticated' });
+      return;
+    }
+
+    this.resetIdleTimeout(client, session);
+
+    // Convert base64 to Buffer
+    const audioBuffer = Buffer.from(data.audio, 'base64');
+
+    const result = await this.voiceLiveService.sendAudio(client.id, audioBuffer);
+    if (!result.success) {
+      client.emit('liveError', { message: result.error || 'Failed to send audio' });
+    }
+  }
+
+  @SubscribeMessage('stopLiveSession')
+  async handleStopLiveSession(@ConnectedSocket() client: Socket) {
+    await this.voiceLiveService.closeSession(client.id);
+    client.emit('liveSessionStopped');
+  }
+
 }

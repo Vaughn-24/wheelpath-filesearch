@@ -13,7 +13,7 @@ initializeApp();
 const firestore = getFirestore();
 const storage = new Storage();
 
-const project = process.env.GCP_PROJECT || 'wheelpath-ai-dev';
+const project = process.env.GCP_PROJECT || 'wheelpath-filesearch';
 const location = process.env.GCP_LOCATION || 'us-central1';
 // For Upsert, we need the Index ID, not the Endpoint ID
 const indexId = process.env.VERTEX_INDEX_ID;

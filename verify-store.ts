@@ -3,7 +3,7 @@ import { initializeApp } from 'firebase-admin/app';
 import { getFirestore } from 'firebase-admin/firestore';
 
 // Initialize
-initializeApp({ projectId: 'wheelpath-ai-dev' });
+initializeApp({ projectId: 'wheelpath-filesearch' });
 const db = getFirestore();
 
 async function verifyStore() {
