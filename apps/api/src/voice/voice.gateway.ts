@@ -119,12 +119,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     // Debug: Log all incoming messages at the server level
     console.log('[VoiceGateway] Gateway initialized, setting up message listeners');
     console.log('[VoiceGateway] Server namespaces:', (server as any)._nsps);
-
+    
     // Use this.server which is already scoped to the /voice namespace via @WebSocketGateway decorator
     // Listen to connections on this namespace
     this.server.on('connection', (socket) => {
       console.log(`[VoiceGateway] Raw socket.io connection in /voice namespace: ${socket.id}`);
-
+      
       // Log all events on this socket
       socket.onAny((event, ...args) => {
         console.log(`[VoiceGateway] ====== RAW SOCKET EVENT ======`);
@@ -465,7 +465,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         documentId: session.documentId,
         isActive: session.isActive,
       });
-
+      
       // Debug: Set up message listener on this specific client
       client.onAny((event, ...args) => {
         console.log(`[VoiceGateway] Client ${client.id} event: ${event}`, {

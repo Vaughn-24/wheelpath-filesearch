@@ -138,7 +138,7 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
           // Other errors - show empty list instead of demo data
           console.warn('[DocumentList] Showing empty list due to error (not demo data)');
           setDocs([]);
-          setLoading(false);
+        setLoading(false);
         }
       },
     );
@@ -368,14 +368,14 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
                       Process
                     </button>
                   )}
-                  <button
-                    onClick={(e) => handleDelete(e, doc.id)}
+                <button
+                  onClick={(e) => handleDelete(e, doc.id)}
                     className="p-xs rounded-sm text-foreground-subtle hover:bg-error/10 hover:text-error transition-all opacity-0 group-hover:opacity-100"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                    </svg>
-                  </button>
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                  </svg>
+                </button>
                 </div>
               </div>
             ))}

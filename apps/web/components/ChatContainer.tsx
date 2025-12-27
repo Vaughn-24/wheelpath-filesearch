@@ -41,6 +41,95 @@ const DEMO_RESPONSES = [
   'The Structural Engineering Report indicates that the steel beam connections at grid lines 3 and 7 require special inspection per IBC Section 1705 [1]. Welding procedures must comply with AWS D1.1 specifications [2].',
 ];
 
+/**
+ * Normalize construction terminology that speech recognition commonly mishears.
+ * Converts spoken abbreviations like "R5" to "RFI", "see oh" to "CO", etc.
+ */
+const normalizeConstructionTerms = (text: string): string => {
+  const corrections: Record<string, string> = {
+    // === DOCUMENT TYPES (most commonly misheard) ===
+    // RFI - Request for Information
+    'r5': 'RFI', 'r 5': 'RFI', 'r f i': 'RFI', 'r.f.i.': 'RFI', 'our fi': 'RFI',
+    'are fi': 'RFI', 'rfr': 'RFI', 'our fy': 'RFI', 'rf i': 'RFI', 'rfi': 'RFI',
+    
+    // CO - Change Order
+    'c.o.': 'CO', 'c o': 'CO', 'see oh': 'CO', 'seal': 'CO',
+    
+    // PCO - Potential/Proposed Change Order
+    'p.c.o.': 'PCO', 'p c o': 'PCO',
+    
+    // ASI - Architect's Supplemental Instruction
+    'a.s.i.': 'ASI', 'a s i': 'ASI', 'as i': 'ASI',
+    
+    // CCD - Construction Change Directive
+    'c.c.d.': 'CCD', 'c c d': 'CCD',
+    
+    // SOW - Scope of Work
+    's.o.w.': 'SOW', 's o w': 'SOW', 'so w': 'SOW',
+    
+    // NTP - Notice to Proceed
+    'n.t.p.': 'NTP', 'n t p': 'NTP',
+    
+    // TCO - Temporary Certificate of Occupancy
+    't.c.o.': 'TCO', 't c o': 'TCO',
+    
+    // GMP - Guaranteed Maximum Price
+    'g.m.p.': 'GMP', 'g m p': 'GMP',
+    
+    // T&M - Time and Materials
+    't and m': 'T&M', 't&m': 'T&M', 'time and material': 'T&M',
+    
+    // === DESIGN PHASES ===
+    's.d.': 'SD', 's d': 'SD',
+    'd.d.': 'DD', 'd d': 'DD',
+    'c.d.': 'CD', 'c d': 'CD', 'cds': 'CDs',
+    'c.a.': 'CA', 'c a': 'CA',
+    't.i.': 'TI', 't i': 'TI', 'tee i': 'TI',
+    
+    // === ROLES/PEOPLE ===
+    'g.c.': 'GC', 'g c': 'GC', 'gee see': 'GC',
+    'p.m.': 'PM', 'p m': 'PM',
+    'p.e.': 'PE', 'p e': 'PE',
+    'supe': 'superintendent',
+    
+    // === MEP TRADES ===
+    'm.e.p.': 'MEP', 'm e p': 'MEP',
+    'h.v.a.c.': 'HVAC', 'h vac': 'HVAC', 'h back': 'HVAC', 'h vack': 'HVAC',
+    'b.i.m.': 'BIM', 'b i m': 'BIM',
+    'v.d.c.': 'VDC', 'v d c': 'VDC',
+    
+    // === SAFETY/COMPLIANCE ===
+    'o.s.h.a.': 'OSHA', 'o sha': 'OSHA',
+    'p.p.e.': 'PPE', 'p p e': 'PPE',
+    'a.d.a.': 'ADA', 'a d a': 'ADA',
+    'l.e.e.d.': 'LEED', 'l e e d': 'LEED',
+    
+    // === COMMON SITE TERMS ===
+    'submit all': 'submittal', 'submit al': 'submittal',
+    'transmit all': 'transmittal', 'transmit al': 'transmittal',
+    'f f and e': 'FF&E', 'ff&e': 'FF&E', 'ffe': 'FF&E', 'ff and e': 'FF&E',
+    'o and m': 'O&M', 'o&m': 'O&M',
+    
+    // === CARPENTRY TERMS ===
+    'joy st': 'joist', 'joyce': 'joist',
+    'heater': 'header',
+    'rough in': 'rough-in', 'roughin': 'rough-in',
+    'dry wall': 'drywall',
+    'sheet rock': 'sheetrock',
+    'ply wood': 'plywood',
+    'o.s.b.': 'OSB',
+    'l.v.l.': 'LVL',
+    'glue lam': 'glulam',
+  };
+
+  let normalized = text;
+  for (const [wrong, right] of Object.entries(corrections)) {
+    const regex = new RegExp(`\\b${wrong}\\b`, 'gi');
+    normalized = normalized.replace(regex, right);
+  }
+  return normalized;
+};
+
 export default function ChatContainer({
   documentId,
   documentTitle,
@@ -89,6 +178,7 @@ export default function ChatContainer({
   const voiceSocketRef = useRef<Socket | null>(null);
   const audioQueueRef = useRef<Array<{ audio: string; format: string; index: number }>>([]);
   const isPlayingAudioRef = useRef(false);
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // PDF state
   const [page, setPage] = useState(1);
@@ -251,17 +341,21 @@ export default function ChatContainer({
     setVoiceState('speaking');
     const chunk = audioQueueRef.current.shift()!;
     const audio = new Audio(`data:audio/${chunk.format};base64,${chunk.audio}`);
+    currentAudioRef.current = audio;
     
     audio.onended = () => {
+      currentAudioRef.current = null;
       playNextAudioChunk();
     };
 
     audio.onerror = () => {
+      currentAudioRef.current = null;
       playNextAudioChunk();
     };
 
     audio.play().catch((err) => {
       console.error('Audio play failed:', err);
+      currentAudioRef.current = null;
       playNextAudioChunk();
     });
   }, []);
@@ -547,7 +641,9 @@ export default function ChatContainer({
       inputRef.current.value = '';
       setInputLength(0);
     }
-    await processQuery(inputValue, false);
+    // Normalize construction terms for text input (fixes "r5" -> "RFI", etc.)
+    const normalizedInput = normalizeConstructionTerms(inputValue);
+    await processQuery(normalizedInput, false);
   };
 
   // Voice mode functions
@@ -591,23 +687,30 @@ export default function ChatContainer({
         if (event.results[i].isFinal) finalTranscript += t;
         else interimTranscript += t;
       }
-      setTranscript(finalTranscript || interimTranscript);
-      if (finalTranscript && voiceSocketRef.current) {
+      
+      // Normalize construction terms (fixes "R5" -> "RFI", etc.)
+      const normalizedFinal = normalizeConstructionTerms(finalTranscript);
+      const normalizedInterim = normalizeConstructionTerms(interimTranscript);
+      
+      setTranscript(normalizedFinal || normalizedInterim);
+      if (normalizedFinal && voiceSocketRef.current) {
         // Use WebSocket for voice queries
         console.log('[ChatContainer] Emitting voiceQuery via WebSocket', {
-          transcript: finalTranscript,
+          original: finalTranscript,
+          normalized: normalizedFinal,
           socketConnected: voiceSocketRef.current.connected,
           socketId: voiceSocketRef.current.id,
         });
         setVoiceState('processing');
-        voiceSocketRef.current.emit('voiceQuery', { text: finalTranscript });
-      } else if (finalTranscript) {
+        voiceSocketRef.current.emit('voiceQuery', { text: normalizedFinal });
+      } else if (normalizedFinal) {
         // Fallback to HTTP if WebSocket not available
         console.log('[ChatContainer] WebSocket not available, falling back to HTTP', {
-          transcript: finalTranscript,
+          original: finalTranscript,
+          normalized: normalizedFinal,
           hasSocket: !!voiceSocketRef.current,
         });
-        processQuery(finalTranscript, true);
+        processQuery(normalizedFinal, true);
       }
     };
 
@@ -673,8 +776,25 @@ export default function ChatContainer({
   }, []);
 
   const stopSpeaking = useCallback(() => {
+    // Stop browser TTS
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     synthRef.current = null;
+    
+    // Stop current Gemini TTS audio
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause();
+      currentAudioRef.current = null;
+    }
+    
+    // Clear audio queue
+    audioQueueRef.current = [];
+    isPlayingAudioRef.current = false;
+    
+    // Tell server to stop sending more audio
+    if (voiceSocketRef.current?.connected) {
+      voiceSocketRef.current.emit('voiceCancel');
+    }
+    
     if (voiceState === 'speaking') setVoiceState('idle');
   }, [voiceState]);
 

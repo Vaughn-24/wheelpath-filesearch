@@ -156,10 +156,10 @@ export default function DocumentUploader() {
               uploadSuccess
                 ? 'border-success bg-success/10'
                 : demoUploaded
-                  ? 'border-success bg-success/10'
-                  : isDragging
-                    ? 'border-terracotta bg-terracotta-light'
-                    : 'border-border hover:border-terracotta hover:bg-terracotta-light/50'
+                ? 'border-success bg-success/10'
+                : isDragging
+                  ? 'border-terracotta bg-terracotta-light'
+                  : 'border-border hover:border-terracotta hover:bg-terracotta-light/50'
             }
             ${!user || uploading || processing ? 'opacity-50 cursor-not-allowed' : ''}
             lg:min-h-0 min-h-[200px] lg:py-lg flex flex-col items-center justify-center
@@ -232,9 +232,9 @@ export default function DocumentUploader() {
               ? 'Processing...'
               : uploadSuccess || demoUploaded
                 ? 'Ready!'
-                : loading
-                  ? 'Connecting...'
-                  : 'Add Source'}
+              : loading
+                ? 'Connecting...'
+                : 'Add Source'}
         </h3>
         <p className="text-body-sm lg:text-caption text-foreground-muted mt-xs lg:hidden">
           Drag & drop PDF or click to browse

@@ -200,20 +200,10 @@ export default function Home() {
 
           {/* Chat History Section */}
           <div className="border-t border-border">
-            <div className="p-md flex items-center justify-between">
+            <div className="p-md">
               <span className="text-caption font-medium text-foreground-muted uppercase tracking-wider">
                 History
               </span>
-              {/* New Chat Button */}
-              <button
-                onClick={handleNewChat}
-                className="p-xs rounded hover:bg-terracotta-light text-foreground-muted hover:text-terracotta transition-all"
-                title="New chat"
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                </svg>
-              </button>
             </div>
 
             {/* Chat History List */}

@@ -27,8 +27,6 @@ export class RagService {
 
   async chatStream(tenantId: string, documentId: string, query: string, history: Message[]) {
     let context = '';
-    let fileUri: string | null = null;
-    let mimeType = 'application/pdf';
     const citations: any[] = [];
 
     // Get document(s) to search
@@ -36,27 +34,31 @@ export class RagService {
     if (documentId && documentId !== 'all') {
       docIds.push(documentId);
     } else {
-      // Get all tenant documents
+      // Get all ready documents (TODO: add tenant filter back for production)
       const docsSnap = await this.firestore.collection('documents')
-        .where('tenantId', '==', tenantId)
         .where('status', '==', 'ready')
         .get();
       docsSnap.forEach(d => docIds.push(d.id));
+      console.log('[RagService] Found docs (all tenants):', docIds.length);
     }
 
     console.log('[RagService] Processing query for docs:', docIds);
 
-    // For each document, check for geminiFileUri OR fall back to chunks
-    for (const docId of docIds.slice(0, 3)) { // Limit to 3 docs
+    // Collect ALL file URIs from documents
+    const fileUris: { fileUri: string; mimeType: string; title: string }[] = [];
+
+    for (const docId of docIds.slice(0, 5)) { // Limit to 5 docs for cost control
       const docSnap = await this.firestore.collection('documents').doc(docId).get();
       const docData = docSnap.data();
       
       if (docData?.geminiFileUri) {
-        // Use Gemini File API (preferred)
-        fileUri = docData.geminiFileUri;
-        mimeType = docData.mimeType || 'application/pdf';
-        console.log('[RagService] Using Gemini File API:', fileUri);
-        break; // Only use one file for now
+        // Add to file list (don't break - collect all)
+        fileUris.push({
+          fileUri: docData.geminiFileUri,
+          mimeType: docData.mimeType || 'application/pdf',
+          title: docData.title || docId,
+        });
+        console.log('[RagService] Adding file:', docData.title);
       } else {
         // Fall back to existing chunks in Firestore
         const chunksSnap = await this.firestore
@@ -65,8 +67,6 @@ export class RagService {
           .orderBy('chunkIndex')
           .limit(10)
           .get();
-        
-        console.log('[RagService] Falling back to chunks for doc:', docId, 'found:', chunksSnap.size);
         
         if (!chunksSnap.empty) {
           chunksSnap.docs.forEach((chunk) => {
@@ -83,13 +83,14 @@ export class RagService {
       }
     }
 
+    console.log('[RagService] Files to search:', fileUris.length, 'Context chunks:', citations.length);
+
     // Build system prompt
-    const hasContext = fileUri || context.length > 0;
-    console.log('[RagService] Context built:', { hasFileUri: !!fileUri, contextLength: context.length, citationCount: citations.length });
+    const hasContext = fileUris.length > 0 || context.length > 0;
     
     const systemPrompt = hasContext
       ? `You are WheelPath AI — the calm, experienced field mentor for construction professionals.
-${context ? `Use this context to answer:\n${context}` : 'Use the attached document to answer.'}
+${context ? `Use this context to answer:\n${context}` : `Search the ${fileUris.length} attached document(s) to answer.`}
 Cite sources using [1], [2], etc. Tagline: "Get Clarity. Go Build."`
       : `You are WheelPath AI. The user hasn't uploaded documents yet. Help with general questions and encourage document upload.`;
 
@@ -106,10 +107,10 @@ Cite sources using [1], [2], etc. Tagline: "Get Clarity. Go Build."`
       ...history.map((m) => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
     ];
 
-    // Build message - include file if available, otherwise just text
+    // Build message - include ALL files, then the query
     const messageParts: any[] = [];
-    if (fileUri) {
-      messageParts.push({ fileData: { fileUri, mimeType } });
+    for (const file of fileUris) {
+      messageParts.push({ fileData: { fileUri: file.fileUri, mimeType: file.mimeType } });
     }
     messageParts.push({ text: query });
 
@@ -118,9 +119,9 @@ Cite sources using [1], [2], etc. Tagline: "Get Clarity. Go Build."`
       const result = await chat.sendMessageStream(messageParts);
 
       this.metricsService.track({
-        type: 'chat_query',
-        tenantId,
-        documentId: documentId === 'all' ? undefined : documentId,
+          type: 'chat_query',
+          tenantId,
+          documentId: documentId === 'all' ? undefined : documentId,
         metadata: { queryLength: query.length },
       }).catch(() => {});
 
