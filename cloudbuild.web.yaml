@@ -1,3 +1,6 @@
+substitutions:
+  _FIREBASE_API_KEY: ''  # Set via Cloud Build trigger or --substitutions flag
+
 steps:
   # Build the Web image
   - name: 'gcr.io/cloud-builders/docker'
@@ -18,7 +21,7 @@ steps:
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=wheelpath-filesearch.firebasestorage.app'
       - '--build-arg'
-      - 'NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyDFgOEFCQLXh3cmz0W-sWDdOVegwr16zOg'
+      - 'NEXT_PUBLIC_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=412476503686'
       - '--build-arg'
