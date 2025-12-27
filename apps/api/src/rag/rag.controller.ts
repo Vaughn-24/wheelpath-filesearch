@@ -31,6 +31,14 @@ export class RagController {
     @Body() body: { documentId?: string; query: string; history: Message[] },
     @Res() res: Response,
   ) {
+    // [Checkpoint 10] Controller method called
+    console.log('[RagController] streamChat called', {
+      tenantId,
+      documentId: body.documentId || 'all',
+      queryLength: body.query?.length || 0,
+      historyLength: body.history?.length || 0,
+    });
+
     // === COST PROTECTION: Rate Limiting ===
     const rateCheck = this.rateLimitService.checkChatLimit(tenantId);
     if (!rateCheck.allowed) {
@@ -86,12 +94,24 @@ export class RagController {
       this.rateLimitService.recordChatQuery(tenantId);
       this.rateLimitService.recordLLMCall(tenantId);
 
+      // [Checkpoint 11] Service method invoked
+      console.log('[RagController] Calling ragService.chatStream', {
+        tenantId,
+        documentId: targetDocId,
+        queryLength: body.query.length,
+      });
+
       const { stream, citations } = await this.ragService.chatStream(
         tenantId,
         targetDocId,
         body.query,
         trimmedHistory,
       );
+
+      console.log('[RagController] Stream received, starting response', {
+        hasCitations: !!citations && citations.length > 0,
+        citationCount: citations?.length || 0,
+      });
 
       // Send citations and rate limit info first
       res.write(
@@ -108,7 +128,7 @@ export class RagController {
       const maxResponseChars = RATE_LIMITS.CHAT_RESPONSE_MAX_TOKENS * 4; // ~4 chars per token
 
       for await (const item of stream) {
-        const text = item.candidates[0]?.content?.parts?.[0]?.text;
+        const text = item.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           totalResponseLength += text.length;
 
@@ -124,8 +144,13 @@ export class RagController {
       }
       res.write('data: [DONE]\n\n');
       res.end();
+      console.log('[RagController] Stream completed successfully');
     } catch (error) {
-      console.error(error);
+      console.error('[RagController] Stream error', {
+        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       res.write(`data: ${JSON.stringify({ error: 'Processing failed' })}\n\n`);
       res.end();
     }

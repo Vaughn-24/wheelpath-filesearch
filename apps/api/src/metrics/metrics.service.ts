@@ -51,7 +51,15 @@ export class MetricsService {
 
   constructor() {
     if (!admin.apps.length) {
-      admin.initializeApp();
+      try {
+        admin.initializeApp({
+          projectId: process.env.GCP_PROJECT || 'wheelpath-filesearch',
+        });
+        console.log('MetricsService: Firebase Admin initialized with project:', process.env.GCP_PROJECT || 'wheelpath-filesearch');
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.warn('MetricsService: Firebase Admin initialization warning:', msg);
+      }
     }
     this.firestore = admin.firestore();
   }

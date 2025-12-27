@@ -24,7 +24,13 @@
     "test": "npm -ws run test",
     "build": "npm -w packages/schemas run build && npm -w packages/types run build && npm -w packages/validation run build && npm -w apps/api run build && npm -w apps/web run build",
     "codegen:types": "json2ts -i packages/schemas/rfi.schema.json -o packages/types/src/rfi.ts --banner \"// Generated from rfi.schema.json\"",
-    "codegen:zod": "zod-to-json-schema --from packages/validation/src/rfi.zod.ts --to packages/schemas/rfi.schema.json"
+    "codegen:zod": "zod-to-json-schema --from packages/validation/src/rfi.zod.ts --to packages/schemas/rfi.schema.json",
+    "logs:extract": "node scripts/extract-logs.js",
+    "logs:summary": "node scripts/log-summary.js",
+    "test:voice": "ts-node scripts/test-voice-agent.ts",
+    "test:voice:stream": "ts-node scripts/test-voice-agent.ts --stream",
+    "test:voice:ws": "ts-node scripts/test-voice-agent.ts --websocket",
+    "test:voice:api": "ts-node scripts/test-voice-stream.ts"
   },
   "lint-staged": {
     "**/*.{ts,tsx,js,jsx}": [

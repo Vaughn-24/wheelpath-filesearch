@@ -1,5 +1,5 @@
 import { Document } from '@wheelpath/schemas';
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 
 import ChatContainer from '../components/ChatContainer';
 import DocumentList from '../components/DocumentList';
@@ -19,6 +19,12 @@ export default function Home() {
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0); // Used to reset ChatContainer
+  const [mounted, setMounted] = useState(false);
+
+  // Prevent hydration mismatch by only rendering user-dependent content after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const handleSelect = async (doc: Document) => {
     if (!user) {
@@ -90,7 +96,7 @@ export default function Home() {
       <main className="lg:hidden min-h-screen bg-background p-lg font-sans text-foreground">
         <div className="max-w-7xl mx-auto space-y-xl">
           {/* Demo Mode Banner */}
-          {isDemo && (
+          {mounted && isDemo && (
             <div className="bg-terracotta-light border-2 border-terracotta/30 rounded-md p-md flex items-center gap-md">
               <div className="p-xs bg-terracotta rounded-sm">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
@@ -104,7 +110,7 @@ export default function Home() {
           )}
 
           {/* Mobile Header */}
-          <header className="flex items-center justify-between">
+          <header className="flex items-center justify-between" suppressHydrationWarning>
             <div>
               <h1 className="text-heading-lg font-semibold tracking-tight text-foreground">
                 WheelPath
@@ -112,14 +118,16 @@ export default function Home() {
               <p className="text-foreground-muted text-body-sm mt-xs">Engineering intelligence</p>
             </div>
             <div className="flex items-center gap-sm">
-              {user ? (
+              {mounted && user ? (
                 <div className="h-10 w-10 rounded-full bg-terracotta flex items-center justify-center text-white font-medium">
                   {user.email ? user.email[0].toUpperCase() : 'A'}
                 </div>
-              ) : (
+              ) : mounted && !loading ? (
                 <button onClick={signInWithGoogle} className="btn-primary text-body-sm py-sm">
                   Sign in
                 </button>
+              ) : (
+                <div className="h-10 w-10 rounded-full bg-border animate-pulse"></div>
               )}
             </div>
           </header>
@@ -162,7 +170,7 @@ export default function Home() {
           <div className="p-xl border-b border-border">
             <div className="flex items-center justify-between mb-lg">
               <h1 className="text-heading-lg font-semibold text-foreground">WheelPath</h1>
-              {user && (
+              {mounted && user && (
                 <div className="h-8 w-8 rounded-full bg-terracotta flex items-center justify-center text-white text-body-sm font-medium">
                   {user.email ? user.email[0].toUpperCase() : 'A'}
                 </div>
@@ -172,7 +180,7 @@ export default function Home() {
               Engineering intelligence, grounded in your documents.
             </p>
 
-            {isDemo && (
+            {mounted && isDemo && (
               <div className="mt-md px-md py-xs bg-terracotta-light rounded-sm inline-flex items-center gap-xs">
                 <span className="w-2 h-2 bg-terracotta rounded-full"></span>
                 <span className="text-terracotta text-caption font-medium">Demo Mode</span>
@@ -258,7 +266,7 @@ export default function Home() {
           </div>
 
           {/* Sign in prompt (if not logged in) */}
-          {!user && !loading && (
+          {mounted && !user && !loading && (
             <div className="p-lg border-t border-border">
               <button
                 onClick={signInWithGoogle}
@@ -273,7 +281,7 @@ export default function Home() {
         {/* MAIN CONTENT - Unified Chat/Voice Container */}
         <div className="flex-1 h-full flex flex-col">
           {/* Top Bar */}
-          <header className="h-14 px-xl flex items-center justify-between border-b border-border bg-background shrink-0">
+          <header className="h-14 px-xl flex items-center justify-between border-b border-border bg-background shrink-0" suppressHydrationWarning>
             <h2 className="text-heading font-medium text-foreground">
               {selectedDoc?.title || 'Project Chat'}
             </h2>
@@ -288,7 +296,7 @@ export default function Home() {
                   <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
                 </svg>
               </button>
-              {!user && !loading && (
+              {mounted && !user && !loading && (
                 <button onClick={signInWithGoogle} className="btn-primary text-body-sm">
                   Sign in with Google
                 </button>

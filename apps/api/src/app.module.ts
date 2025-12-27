@@ -11,6 +11,7 @@ import { VoiceModule } from './voice/voice.module';
 import { SchemasController } from './schemas/schemas.controller';
 import { RfiController } from './rfi/rfi.controller';
 import { InMemoryRfiRepository } from './rfi/rfi.repository';
+import { FirebaseAdminService } from './firebase/firebase-admin.service';
 
 @Module({
   // CommonModule provides shared rate limiting across all features
@@ -19,6 +20,7 @@ import { InMemoryRfiRepository } from './rfi/rfi.repository';
   // DocumentsModule handles uploads/viewing
   imports: [CommonModule, AuthModule, DocumentsModule, RagModule, MetricsModule, VoiceModule],
   controllers: [AppController, MeController, SchemasController, RfiController],
-  providers: [InMemoryRfiRepository],
+  providers: [InMemoryRfiRepository, FirebaseAdminService],
+  exports: [FirebaseAdminService],
 })
 export class AppModule {}

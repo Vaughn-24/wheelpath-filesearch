@@ -65,31 +65,87 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
       return;
     }
 
+    // Try query with orderBy first, fall back to simple query if index missing
+    let unsubscribe: (() => void) | null = null;
+    
     const q = query(
       collection(db, 'documents'),
       where('tenantId', '==', user.uid),
       orderBy('createdAt', 'desc'),
     );
 
-    const unsubscribe = onSnapshot(
+    unsubscribe = onSnapshot(
       q,
       (snapshot) => {
         const documents: Document[] = [];
         snapshot.forEach((doc) => {
           documents.push({ id: doc.id, ...doc.data() } as Document);
         });
+        console.log('[DocumentList] ✅ Documents loaded:', documents.length, 'for tenant:', user.uid);
+        if (documents.length > 0) {
+          console.log('[DocumentList] Document titles:', documents.map(d => d.title));
+        }
         setDocs(documents);
         setLoading(false);
       },
-      (error) => {
-        console.error('Firestore error:', error);
-        // On error, fall back to demo data
-        setDocs(DEMO_DOCUMENTS);
-        setLoading(false);
+      (error: any) => {
+        console.error('[DocumentList] ❌ Firestore query error:', {
+          code: error.code,
+          message: error.message,
+          tenantId: user.uid,
+        });
+        
+        // If index missing, try query without orderBy
+        if (error.code === 'failed-precondition' || error.message?.includes('index') || error.code === 9) {
+          console.warn('[DocumentList] Index missing or query failed, trying query without orderBy...');
+          const simpleQuery = query(
+            collection(db, 'documents'),
+            where('tenantId', '==', user.uid),
+          );
+          
+          unsubscribe = onSnapshot(
+            simpleQuery,
+            (snapshot) => {
+              const documents: Document[] = [];
+              snapshot.forEach((doc) => {
+                documents.push({ id: doc.id, ...doc.data() } as Document);
+              });
+              // Sort client-side
+              documents.sort((a, b) => {
+                const aTime = new Date(a.createdAt || 0).getTime();
+                const bTime = new Date(b.createdAt || 0).getTime();
+                return bTime - aTime;
+              });
+              console.log('[DocumentList] ✅ Documents loaded (client-sorted):', documents.length);
+              if (documents.length > 0) {
+                console.log('[DocumentList] Document titles:', documents.map(d => d.title));
+              }
+              setDocs(documents);
+              setLoading(false);
+            },
+            (fallbackError: any) => {
+              console.error('[DocumentList] ❌ Fallback query also failed:', {
+                code: fallbackError.code,
+                message: fallbackError.message,
+              });
+              // Don't fall back to demo data - show empty list instead
+              console.warn('[DocumentList] Showing empty list due to Firestore error');
+              setDocs([]);
+              setLoading(false);
+            },
+          );
+        } else {
+          // Other errors - show empty list instead of demo data
+          console.warn('[DocumentList] Showing empty list due to error (not demo data)');
+          setDocs([]);
+          setLoading(false);
+        }
       },
     );
 
-    return () => unsubscribe();
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
   }, [user]);
 
   const handleDelete = async (e: React.MouseEvent, docId: string) => {
@@ -115,6 +171,35 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
       console.error('Failed to delete', err);
       alert('Failed to delete document');
     }
+  };
+
+  const handleProcess = async (e: React.MouseEvent, docId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (isDemoMode) return;
+
+    try {
+      const token = await user?.getIdToken();
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      const res = await fetch(`${apiUrl}/documents/${docId}/process`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message || 'Processing failed');
+      }
+      alert('Document processed successfully!');
+    } catch (err: any) {
+      console.error('Failed to process', err);
+      alert(`Failed to process: ${err.message}`);
+    }
+  };
+
+  // Check if document needs processing (no geminiFileUri)
+  const needsProcessing = (doc: Document) => {
+    return doc.status === 'ready' && !(doc as any).geminiFileUri;
   };
 
   const getStatusStyle = (status: string) => {
@@ -192,6 +277,15 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
                   </div>
                   <div className="flex items-center gap-xs">
                     <span className={getStatusStyle(doc.status)}>{getStatusText(doc.status)}</span>
+                    {needsProcessing(doc) && (
+                      <button
+                        onClick={(e) => handleProcess(e, doc.id)}
+                        className="px-xs py-0.5 rounded-sm text-micro bg-terracotta/10 text-terracotta hover:bg-terracotta hover:text-white transition-all"
+                        title="Process document for AI search"
+                      >
+                        Process
+                      </button>
+                    )}
                     <button
                       onClick={(e) => handleDelete(e, doc.id)}
                       className="p-xs rounded-sm text-foreground-subtle hover:bg-error/10 hover:text-error transition-all opacity-0 group-hover:opacity-100"
@@ -263,15 +357,26 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
                   </div>
                 </div>
 
-                {/* Delete */}
-                <button
-                  onClick={(e) => handleDelete(e, doc.id)}
-                  className="p-xs rounded-sm text-foreground-subtle hover:bg-error/10 hover:text-error transition-all opacity-0 group-hover:opacity-100 shrink-0"
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-                    <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
-                  </svg>
-                </button>
+                {/* Actions */}
+                <div className="flex items-center gap-xs shrink-0">
+                  {needsProcessing(doc) && (
+                    <button
+                      onClick={(e) => handleProcess(e, doc.id)}
+                      className="px-xs py-0.5 rounded-sm text-micro bg-terracotta/10 text-terracotta hover:bg-terracotta hover:text-white transition-all"
+                      title="Process document for AI search"
+                    >
+                      Process
+                    </button>
+                  )}
+                  <button
+                    onClick={(e) => handleDelete(e, doc.id)}
+                    className="p-xs rounded-sm text-foreground-subtle hover:bg-error/10 hover:text-error transition-all opacity-0 group-hover:opacity-100"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    </svg>
+                  </button>
+                </div>
               </div>
             ))}
           </div>

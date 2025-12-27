@@ -24,16 +24,25 @@ export class VoiceService {
   private indexEndpointId = process.env.VERTEX_INDEX_ENDPOINT_ID;
   private deployedIndexId = process.env.VERTEX_DEPLOYED_INDEX_ID;
   private publicEndpointDomain = process.env.VERTEX_PUBLIC_ENDPOINT_DOMAIN;
+  
+  // Request timeout protection (10 seconds for vector search, 30 seconds for LLM)
+  private readonly VECTOR_SEARCH_TIMEOUT_MS = 10000;
+  private readonly LLM_REQUEST_TIMEOUT_MS = 30000;
 
   constructor(private readonly metricsService: MetricsService) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.genAI = new GoogleGenerativeAI(apiKey);
-      // Use Gemini 3 Pro for high-quality voice responses
+      // Use Gemini 2.0 Flash for high-quality voice responses (fast & current)
       // Can be overridden with GEMINI_VOICE_MODEL env var
-      const voiceModel = process.env.GEMINI_VOICE_MODEL || 'gemini-3-pro-preview';
-      this.model = this.genAI.getGenerativeModel({ model: voiceModel });
-      console.log(`VoiceService: Initialized Gemini 3 (${voiceModel})`);
+      const voiceModel = process.env.GEMINI_VOICE_MODEL || 'gemini-2.0-flash';
+      this.model = this.genAI.getGenerativeModel({ 
+        model: voiceModel,
+        generationConfig: {
+          maxOutputTokens: 500, // Cost guardrail: voice responses should be concise
+        },
+      });
+      console.log(`VoiceService: Initialized Gemini (${voiceModel}) with maxOutputTokens=500`);
     } else {
       console.warn('VoiceService: GEMINI_API_KEY not set');
     }
@@ -43,7 +52,15 @@ export class VoiceService {
     });
 
     if (!admin.apps.length) {
-      admin.initializeApp();
+      try {
+        admin.initializeApp({
+          projectId: this.project,
+        });
+        console.log('VoiceService: Firebase Admin initialized with project:', this.project);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.warn('VoiceService: Firebase Admin initialization warning:', msg);
+      }
     }
     this.firestore = admin.firestore();
   }
@@ -52,27 +69,52 @@ export class VoiceService {
    * Retrieve context chunks for a tenant/document (shared logic with RAG)
    */
   private async retrieveContext(tenantId: string, documentId: string, query: string): Promise<string> {
+    // [Checkpoint 12] Firestore query - Document retrieval for voice
+    const retrieveStartTime = Date.now();
+    console.log('[VoiceService] retrieveContext called', {
+      tenantId,
+      documentId,
+      queryLength: query.length,
+    });
+
     const hasVectorSearch = this.indexEndpointId && this.deployedIndexId && this.publicEndpointDomain;
-    if (!hasVectorSearch) return '';
+    if (!hasVectorSearch) {
+      console.log('[VoiceService] Vector search not available');
+      return '';
+    }
 
     let filter: any = null;
     if (documentId === 'all') {
+      const firestoreStartTime = Date.now();
+      console.log('[VoiceService] Querying Firestore for all documents', { tenantId });
       const docsSnapshot = await this.firestore.collection('documents')
         .where('tenantId', '==', tenantId)
         .select('id')
         .get();
       const docIds = docsSnapshot.docs.map(d => d.id);
+      console.log('[VoiceService] Firestore query completed', {
+        documentCount: docIds.length,
+        duration: Date.now() - firestoreStartTime,
+      });
       if (docIds.length > 0) {
         filter = { namespace: 'documentId', allowList: docIds };
       }
     } else {
+      console.log('[VoiceService] Using single document filter', { documentId });
       filter = { namespace: 'documentId', allowList: [documentId] };
     }
 
     // Embed query
     let embedding: number[] = [];
     try {
+      // [Checkpoint 12.1] Embedding generation for voice
+      const embeddingStartTime = Date.now();
       const endpoint = `projects/${this.project}/locations/${this.location}/publishers/google/models/text-embedding-004`;
+      console.log('[VoiceService] Generating query embedding', {
+        endpoint,
+        queryLength: query.length,
+      });
+
       const instanceValue = {
         structValue: {
           fields: {
@@ -81,10 +123,15 @@ export class VoiceService {
         }
       };
       
-      const [response] = await this.predictionClient.predict({
+      // Add timeout protection to embedding generation
+      const predictPromise = this.predictionClient.predict({
         endpoint,
         instances: [instanceValue as any],
       });
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Embedding timeout')), this.VECTOR_SEARCH_TIMEOUT_MS)
+      );
+      const [response] = await Promise.race([predictPromise, timeoutPromise]) as any;
 
       const predictions = response.predictions;
       if (predictions && predictions.length > 0) {
@@ -93,16 +140,41 @@ export class VoiceService {
           embedding = embeddingValue.map((v: any) => v.numberValue || 0);
         }
       }
+
+      console.log('[VoiceService] Embedding generated', {
+        dimensions: embedding.length,
+        duration: Date.now() - embeddingStartTime,
+      });
     } catch (error: any) {
-      console.error('VoiceService: Embedding failed:', error.message);
+      console.error('[VoiceService] Embedding failed', {
+        error: error.message || String(error),
+        errorCode: error.code || 'unknown',
+        stack: error.stack,
+      });
       return '';
     }
 
-    if (embedding.length === 0) return '';
+    if (embedding.length === 0) {
+      console.log('[VoiceService] No embedding generated, returning empty context');
+      return '';
+    }
 
     // Vector search
     try {
+      // [Checkpoint 12.2] Vector search for voice
+      const vectorSearchStartTime = Date.now();
+      console.log('[VoiceService] Starting vector search', {
+        embeddingDimensions: embedding.length,
+        filterNamespace: filter?.namespace,
+        filterAllowListLength: filter?.allowList?.length || 0,
+      });
+
       const neighbors = await this.findNeighbors(embedding, filter);
+      console.log('[VoiceService] Vector search completed', {
+        neighborCount: neighbors.length,
+        duration: Date.now() - vectorSearchStartTime,
+      });
+
       const chunkRefs = neighbors.map((n: any) => {
         if (!n.datapoint?.datapointId) return null;
         const parts = n.datapoint.datapointId.split('_');
@@ -112,14 +184,36 @@ export class VoiceService {
       }).filter(Boolean) as admin.firestore.DocumentReference[];
 
       if (chunkRefs.length > 0) {
+        // [Checkpoint 12.3] Firestore chunk retrieval for voice
+        const chunkRetrievalStartTime = Date.now();
+        console.log('[VoiceService] Retrieving chunks from Firestore', {
+          chunkCount: chunkRefs.length,
+        });
+
         const chunkSnaps = await this.firestore.getAll(...chunkRefs);
         const texts = chunkSnaps.map(snap => snap.data()?.text || '').filter(Boolean);
-        return texts.join('\n\n');
+        const context = texts.join('\n\n');
+
+        console.log('[VoiceService] Chunks retrieved', {
+          chunkCount: texts.length,
+          contextLength: context.length,
+          duration: Date.now() - chunkRetrievalStartTime,
+          totalDuration: Date.now() - retrieveStartTime,
+        });
+
+        return context;
       }
     } catch (error: any) {
-      console.error('VoiceService: Vector search failed:', error.message);
+      console.error('[VoiceService] Vector search failed', {
+        error: error.message || String(error),
+        errorCode: error.code || 'unknown',
+        stack: error.stack,
+      });
     }
 
+    console.log('[VoiceService] retrieveContext completed with empty context', {
+      totalDuration: Date.now() - retrieveStartTime,
+    });
     return '';
   }
 
@@ -143,21 +237,37 @@ export class VoiceService {
       returnFullDatapoint: false
     };
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${accessToken.token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(body)
-    });
+    // Add timeout protection to vector search fetch
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.VECTOR_SEARCH_TIMEOUT_MS);
+    
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken.token}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
 
-    if (!response.ok) {
-      throw new Error(`Vector Search failed: ${response.status}`);
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        throw new Error(`Vector Search failed: ${response.status}`);
+      }
+
+      const result = await response.json();
+      return result.nearestNeighbors?.[0]?.neighbors || [];
+    } catch (error: any) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError' || error.message?.includes('timeout')) {
+        console.error('[VoiceService] Vector Search timed out or failed:', error.message);
+        return []; // Fallback to empty context instead of hanging
+      }
+      throw error;
     }
-
-    const result = await response.json();
-    return result.nearestNeighbors?.[0]?.neighbors || [];
   }
 
   /**
@@ -295,12 +405,29 @@ NOTE: The user hasn't uploaded project documents yet.
     documentId: string,
     transcribedText: string
   ): AsyncGenerator<string> {
+    // [Checkpoint 12] Voice service method invoked
+    const startTime = Date.now();
+    console.log('[VoiceService] streamVoiceResponse called', {
+      tenantId,
+      documentId,
+      transcribedTextLength: transcribedText.length,
+    });
+
     if (!this.model) {
+      console.warn('[VoiceService] Model not initialized');
       yield "Voice service is being configured.";
       return;
     }
 
+    // [Checkpoint 12.1] Context retrieval
+    const contextStartTime = Date.now();
+    console.log('[VoiceService] Retrieving context for voice query');
     const context = await this.retrieveContext(tenantId, documentId, transcribedText);
+    console.log('[VoiceService] Context retrieved', {
+      contextLength: context.length,
+      duration: Date.now() - contextStartTime,
+    });
+
     const systemPrompt = this.buildVoiceSystemPrompt(context);
 
     const chatHistory = [
@@ -308,15 +435,62 @@ NOTE: The user hasn't uploaded project documents yet.
       { role: 'model', parts: [{ text: 'Understood. I am WheelPath Voice — calm, clear, and grounded in the data. Ready to help.' }] },
     ];
     
+    // [Checkpoint 13] Gemini API call for voice
+    const geminiStartTime = Date.now();
+    console.log('[VoiceService] Calling Gemini API for voice response', {
+      model: 'gemini-2.0-flash',
+      transcribedTextLength: transcribedText.length,
+      hasContext: context.length > 0,
+      timeoutMs: this.LLM_REQUEST_TIMEOUT_MS,
+    });
+    
     const chat = this.model.startChat({ history: chatHistory });
-    const result = await chat.sendMessageStream(transcribedText);
-
-    for await (const chunk of result.stream) {
-      const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) {
-        yield text;
-      }
+    
+    // Add timeout protection around stream start
+    const streamStartTimeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('LLM request timeout')), this.LLM_REQUEST_TIMEOUT_MS)
+    );
+    
+    let result: any;
+    try {
+      result = await Promise.race([chat.sendMessageStream(transcribedText), streamStartTimeoutPromise]);
+    } catch (error: any) {
+      console.error('[VoiceService] Gemini API stream start failed or timed out:', error.message);
+      yield "I'm having trouble processing that right now. Please try again.";
+      return;
     }
+
+    console.log('[VoiceService] Gemini API stream started', {
+      duration: Date.now() - geminiStartTime,
+    });
+
+    // [Checkpoint 14] Response streaming with timeout protection
+    let chunkCount = 0;
+    const streamStartTime = Date.now();
+    
+    try {
+      for await (const chunk of result.stream) {
+        // Check for overall timeout (prevents infinite "thinking")
+        if (Date.now() - streamStartTime > this.LLM_REQUEST_TIMEOUT_MS) {
+          console.error('[VoiceService] Stream consumption timed out');
+          break;
+        }
+        
+        const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text) {
+          chunkCount++;
+          yield text;
+        }
+      }
+    } catch (error: any) {
+      console.error('[VoiceService] Stream consumption error:', error.message);
+      // Don't throw - just stop yielding chunks
+    }
+
+    console.log('[VoiceService] Voice response stream completed', {
+      chunkCount,
+      totalDuration: Date.now() - startTime,
+    });
   }
 }
 

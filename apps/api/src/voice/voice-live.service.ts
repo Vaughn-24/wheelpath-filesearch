@@ -38,7 +38,15 @@ export class VoiceLiveService {
     });
 
     if (!admin.apps.length) {
-      admin.initializeApp();
+      try {
+        admin.initializeApp({
+          projectId: this.project,
+        });
+        console.log('VoiceLiveService: Firebase Admin initialized with project:', this.project);
+      } catch (error: unknown) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        console.warn('VoiceLiveService: Firebase Admin initialization warning:', msg);
+      }
     }
     this.firestore = admin.firestore();
   }
@@ -85,11 +93,17 @@ export class VoiceLiveService {
       if (predictions && predictions.length > 0) {
         const embeddingValue = predictions[0].structValue?.fields?.embeddings?.structValue?.fields?.values?.listValue?.values;
         if (embeddingValue) {
-          embedding = embeddingValue.map((v: { numberValue?: number }) => v.numberValue || 0);
+          embedding = embeddingValue.map((v) => {
+            if ('numberValue' in v && typeof v.numberValue === 'number') {
+              return v.numberValue;
+            }
+            return 0;
+          });
         }
       }
     } catch (error: unknown) {
-      console.error('VoiceLiveService: Embedding failed:', error.message);
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('VoiceLiveService: Embedding failed:', msg);
       return '';
     }
 
@@ -328,7 +342,6 @@ When you need information from the user's uploaded documents, call the search_pr
                     documentId: documentId === 'all' ? undefined : documentId,
                     metadata: {
                       hasContext: context.length > 0,
-                      contextLength: context.length
                     }
                   }).catch((err: unknown) => {
                     const msg = err instanceof Error ? err.message : 'Unknown error';

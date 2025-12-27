@@ -1,5 +1,6 @@
 import { Message } from '@wheelpath/schemas';
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { io, Socket } from 'socket.io-client';
 
 import { useAuth } from '../lib/auth';
 import { isDemoMode } from '../lib/firebase';
@@ -85,6 +86,9 @@ export default function ChatContainer({
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesisUtterance | null>(null);
   const micTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const voiceSocketRef = useRef<Socket | null>(null);
+  const audioQueueRef = useRef<Array<{ audio: string; format: string; index: number }>>([]);
+  const isPlayingAudioRef = useRef(false);
 
   // PDF state
   const [page, setPage] = useState(1);
@@ -117,11 +121,160 @@ export default function ChatContainer({
     }
   }, [cooldownRemaining]);
 
+  // Connect to voice WebSocket when in voice mode
+  useEffect(() => {
+    if (inputMode === 'voice' && user && !voiceSocketRef.current) {
+      const connectVoiceSocket = async () => {
+        try {
+          // [Checkpoint 1] Voice WebSocket - User check
+          console.log('[ChatContainer] Connecting voice WebSocket', {
+            hasUser: !!user,
+            userId: user?.uid || 'none',
+            inputMode,
+          });
+
+          const token = await user.getIdToken();
+          const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+          const socketUrl = `${apiUrl}/voice`;
+          
+          console.log('[ChatContainer] Voice WebSocket - Token retrieved', {
+            apiUrl,
+            socketUrl,
+            hasToken: !!token,
+            tokenLength: token?.length || 0,
+          });
+
+          const socket = io(socketUrl, {
+            auth: { token },
+            transports: ['websocket', 'polling'], // Allow fallback to polling if websocket fails
+          });
+
+          socket.on('connect', () => {
+            console.log('[ChatContainer] Voice socket connected', {
+              socketId: socket.id,
+              connected: socket.connected,
+            });
+            setVoiceState('idle');
+          });
+
+          socket.on('connect_error', (err) => {
+            console.error('[ChatContainer] Voice socket connection error:', err);
+            setChatError('Failed to connect to voice service');
+            setVoiceState('error');
+          });
+
+          socket.on('authenticated', (data) => {
+            console.log('[ChatContainer] Voice socket authenticated', data);
+            socket.emit('setDocument', { documentId: documentId || 'all' });
+          });
+
+          socket.on('voiceStart', (data) => {
+            console.log('[ChatContainer] Voice query started', data);
+            setVoiceState('processing');
+            setVoiceResponse('');
+            audioQueueRef.current = [];
+            isPlayingAudioRef.current = false;
+          });
+
+          socket.on('voiceChunk', (data: { text: string }) => {
+            setVoiceResponse((prev) => prev + data.text);
+          });
+
+          socket.on('voiceAudioChunk', (data: { audio: string; format: string; index: number }) => {
+            audioQueueRef.current.push(data);
+            if (!isPlayingAudioRef.current) {
+              playNextAudioChunk();
+            }
+          });
+
+          socket.on('voiceBrowserTTS', (data: { text: string; index: number; isFinal?: boolean }) => {
+            speakResponse(data.text);
+          });
+
+          socket.on('voiceEnd', (data: { fullText: string; audioChunks?: number }) => {
+            if (!data.audioChunks || data.audioChunks === 0) {
+              speakResponse(data.fullText);
+            } else {
+              setVoiceState('speaking');
+            }
+          });
+
+          socket.on('voiceError', (data: { message: string }) => {
+            console.error('[ChatContainer] Voice error received', data);
+            setChatError(data.message);
+            setVoiceState('error');
+          });
+
+          socket.on('disconnect', (reason) => {
+            console.warn('[ChatContainer] Voice socket disconnected', {
+              reason,
+              socketId: socket.id,
+            });
+            setVoiceState('error');
+          });
+
+          socket.on('error', (error) => {
+            console.error('[ChatContainer] Voice socket error event', error);
+          });
+
+          voiceSocketRef.current = socket;
+        } catch (err) {
+          console.error('[ChatContainer] Failed to connect voice socket', {
+            error: err,
+            errorMessage: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          });
+          setVoiceState('error');
+        }
+      };
+
+      connectVoiceSocket();
+    }
+
+    return () => {
+      if (inputMode !== 'voice' && voiceSocketRef.current) {
+        voiceSocketRef.current.disconnect();
+        voiceSocketRef.current = null;
+      }
+    };
+  }, [inputMode, user, documentId]);
+
+  // Play audio chunks from queue
+  const playNextAudioChunk = useCallback(() => {
+    if (audioQueueRef.current.length === 0) {
+      isPlayingAudioRef.current = false;
+      setVoiceState('idle');
+      return;
+    }
+
+    isPlayingAudioRef.current = true;
+    setVoiceState('speaking');
+    const chunk = audioQueueRef.current.shift()!;
+    const audio = new Audio(`data:audio/${chunk.format};base64,${chunk.audio}`);
+    
+    audio.onended = () => {
+      playNextAudioChunk();
+    };
+
+    audio.onerror = () => {
+      playNextAudioChunk();
+    };
+
+    audio.play().catch((err) => {
+      console.error('Audio play failed:', err);
+      playNextAudioChunk();
+    });
+  }, []);
+
   // Cleanup voice on mode switch
   useEffect(() => {
     if (inputMode === 'text') {
       stopListening();
       stopSpeaking();
+      if (voiceSocketRef.current) {
+        voiceSocketRef.current.disconnect();
+        voiceSocketRef.current = null;
+      }
     }
   }, [inputMode]);
 
@@ -161,11 +314,27 @@ export default function ChatContainer({
 
   // Shared message sending logic
   const processQuery = async (query: string, isVoice: boolean = false) => {
-    if (!query.trim() || !user) return;
+    // [Checkpoint 1] User authentication check
+    console.log('[ChatContainer] processQuery called', {
+      queryLength: query?.trim()?.length || 0,
+      hasUser: !!user,
+      userId: user?.uid || 'none',
+      isVoice,
+      isDemo: isDemo || isDemoMode,
+    });
+
+    if (!query.trim() || !user) {
+      console.warn('[ChatContainer] processQuery early return:', {
+        reason: !query.trim() ? 'empty_query' : 'no_user',
+        hasUser: !!user,
+      });
+      return;
+    }
 
     const now = Date.now();
     if (now - lastMessageTime < CHAT_LIMITS.COOLDOWN_MS) {
       setCooldownRemaining(CHAT_LIMITS.COOLDOWN_MS - (now - lastMessageTime));
+      console.log('[ChatContainer] Cooldown active, skipping request');
       return;
     }
 
@@ -183,6 +352,7 @@ export default function ChatContainer({
 
     // Demo mode
     if (isDemo || isDemoMode) {
+      console.log('[ChatContainer] Running in demo mode - skipping API call');
       setCitations([
         { index: 1, pageNumber: 3, text: 'Section 4.2.1', documentId: 'demo-1' },
         { index: 2, pageNumber: 7, text: 'Appendix B', documentId: 'demo-2' },
@@ -215,28 +385,63 @@ export default function ChatContainer({
 
     // Real API call with timeout protection
     try {
+      // [Checkpoint 2] Token retrieval
+      console.log('[ChatContainer] Retrieving auth token...');
       const token = await user.getIdToken();
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      
+      console.log('[ChatContainer] Token retrieved, constructing request', {
+        apiUrl,
+        hasToken: !!token,
+        tokenLength: token?.length || 0,
+        tokenPrefix: token?.substring(0, 20) || 'none',
+        documentId: documentId || 'all',
+        queryLength: query.length,
+        historyLength: messages.slice(-20).length,
+      });
 
       // AbortController for request timeout
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), CHAT_LIMITS.REQUEST_TIMEOUT_MS);
 
-      const res = await fetch(`${apiUrl}/chat/stream`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
+      // [Checkpoint 3] Request construction
+      const requestUrl = `${apiUrl}/chat/stream`;
+      const requestBody = JSON.stringify({
           documentId: documentId || 'all',
           query,
           history: messages.slice(-20),
-        }),
+      });
+      
+      console.log('[ChatContainer] Sending request', {
+        url: requestUrl,
+        method: 'POST',
+        bodyLength: requestBody.length,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token.substring(0, 20)}...`,
+        },
+      });
+
+      const res = await fetch(requestUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: requestBody,
         signal: controller.signal,
       });
 
       clearTimeout(timeoutId);
 
+      // [Checkpoint 4] Response received
+      console.log('[ChatContainer] Response received', {
+        status: res.status,
+        statusText: res.statusText,
+        ok: res.ok,
+        headers: Object.fromEntries(res.headers.entries()),
+      });
+
       if (res.status === 429) {
         const errorData = await res.json();
+        console.warn('[ChatContainer] Rate limit hit', errorData);
         setChatError(errorData.message || 'Rate limit reached.');
         setMessages((prev) => prev.slice(0, -1));
         setStreaming(false);
@@ -244,7 +449,14 @@ export default function ChatContainer({
         return;
       }
 
-      if (!res.ok || !res.body) throw new Error(`API error: ${res.status}`);
+      if (!res.ok || !res.body) {
+        console.error('[ChatContainer] Request failed', {
+          status: res.status,
+          statusText: res.statusText,
+          hasBody: !!res.body,
+        });
+        throw new Error(`API error: ${res.status}`);
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -304,6 +516,14 @@ export default function ChatContainer({
         speakResponse(fullResponse);
       }
     } catch (err: unknown) {
+      // [Checkpoint 5] Error handling
+      console.error('[ChatContainer] processQuery error', {
+        error: err,
+        errorName: err instanceof Error ? err.name : 'Unknown',
+        errorMessage: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
+      
       let errorMessage = 'Failed to send message';
       if (err instanceof Error) {
         if (err.name === 'AbortError') {
@@ -316,6 +536,7 @@ export default function ChatContainer({
       if (isVoice) setVoiceState('error');
     } finally {
       setStreaming(false);
+      console.log('[ChatContainer] processQuery completed');
     }
   };
 
@@ -371,7 +592,21 @@ export default function ChatContainer({
         else interimTranscript += t;
       }
       setTranscript(finalTranscript || interimTranscript);
-      if (finalTranscript) {
+      if (finalTranscript && voiceSocketRef.current) {
+        // Use WebSocket for voice queries
+        console.log('[ChatContainer] Emitting voiceQuery via WebSocket', {
+          transcript: finalTranscript,
+          socketConnected: voiceSocketRef.current.connected,
+          socketId: voiceSocketRef.current.id,
+        });
+        setVoiceState('processing');
+        voiceSocketRef.current.emit('voiceQuery', { text: finalTranscript });
+      } else if (finalTranscript) {
+        // Fallback to HTTP if WebSocket not available
+        console.log('[ChatContainer] WebSocket not available, falling back to HTTP', {
+          transcript: finalTranscript,
+          hasSocket: !!voiceSocketRef.current,
+        });
         processQuery(finalTranscript, true);
       }
     };
@@ -395,7 +630,14 @@ export default function ChatContainer({
     };
 
     recognitionRef.current = recognition;
-    recognition.start();
+    try {
+      recognition.start();
+    } catch (err: unknown) {
+      console.error('Failed to start recognition:', err);
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      setChatError(`Failed to start: ${errorMessage}`);
+      setVoiceState('error');
+    }
   }, [voiceState]);
 
   const stopListening = useCallback(() => {
@@ -441,7 +683,9 @@ export default function ChatContainer({
     else if (voiceState === 'speaking') {
       stopSpeaking();
       setVoiceState('idle');
-    } else if (voiceState === 'idle' || voiceState === 'error') startListening();
+    } else if (voiceState === 'idle' || voiceState === 'error') {
+      startListening();
+    }
   };
 
   // Render helpers

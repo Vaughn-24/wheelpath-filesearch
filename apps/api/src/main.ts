@@ -27,8 +27,12 @@ async function bootstrap() {
       // Local development
       'http://localhost:3000',
     ],
-    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept'],
+    exposedHeaders: ['X-RateLimit-Remaining', 'X-RateLimit-Limit'],
     credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
   });
   await app.listen(port, '0.0.0.0'); // Bind to 0.0.0.0 for Docker
   console.log(`Application is running on: ${await app.getUrl()}`);

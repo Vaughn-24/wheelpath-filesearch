@@ -126,13 +126,20 @@ export default function VoiceOverlay({
 
         const socket = io(`${apiUrl}/voice`, {
           auth: { token },
-          transports: ['websocket'],
+          transports: ['websocket', 'polling'], // Allow fallback to polling if websocket fails
         });
 
         socket.on('connect', () => {
           console.log('Voice socket connected');
           setConnectionStatus('connected');
           resetIdleTimers();
+        });
+
+        socket.on('connect_error', (err) => {
+          console.error('Voice socket connection error:', err);
+          setError('Failed to connect to voice service');
+          setState('error');
+          setConnectionStatus('disconnected');
         });
 
         socket.on('authenticated', (data: { tenantId: string; limits?: SessionLimits }) => {

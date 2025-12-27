@@ -134,4 +134,19 @@ export class DocumentsController {
       usage: this.rateLimitService.getUsageStats(tenantId),
     };
   }
+
+  @Post(':id/process')
+  async processDocument(
+    @CurrentTenant() tenantId: string,
+    @Param('id') id: string,
+  ) {
+    const result = await this.documents.processDocument(tenantId, id);
+    if (!result.success) {
+      throw new HttpException(
+        { error: 'processing_failed', message: result.error },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+    return { success: true };
+  }
 }

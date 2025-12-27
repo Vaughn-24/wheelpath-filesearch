@@ -21,7 +21,10 @@ let auth: Auth | null = null;
 // Demo mode flag - set to true when Firebase is unavailable
 export let isDemoMode = false;
 
-if (hasValidConfig) {
+// Defer Firebase initialization to avoid blocking module loading
+// This prevents Firebase initialization errors from breaking React's jsx-dev-runtime
+if (typeof window !== 'undefined' && hasValidConfig) {
+  // Client-side: Initialize Firebase asynchronously
   try {
     app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
     db = getFirestore(app);
@@ -30,8 +33,11 @@ if (hasValidConfig) {
     console.warn('Firebase initialization failed, running in demo mode:', error);
     isDemoMode = true;
   }
-} else {
+} else if (!hasValidConfig) {
   console.warn('Firebase config missing, running in demo mode');
+  isDemoMode = true;
+} else {
+  // Server-side: Skip Firebase initialization during SSR to avoid module loading issues
   isDemoMode = true;
 }
 

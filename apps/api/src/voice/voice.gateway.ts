@@ -1,10 +1,11 @@
-import { TextToSpeechClient } from '@google-cloud/text-to-speech';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   WebSocketGateway,
   WebSocketServer,
   SubscribeMessage,
   OnGatewayConnection,
   OnGatewayDisconnect,
+  OnGatewayInit,
   ConnectedSocket,
   MessageBody,
 } from '@nestjs/websockets';
@@ -35,7 +36,7 @@ const COST_LIMITS = {
 
   // TTS cost controls
   MAX_RESPONSE_CHARS: parseInt(process.env.VOICE_MAX_RESPONSE_CHARS || '2000'), // ~$0.032 max per response
-  USE_BROWSER_TTS_THRESHOLD: parseInt(process.env.VOICE_BROWSER_TTS_THRESHOLD || '100'), // Use browser TTS for short responses
+  USE_BROWSER_TTS_THRESHOLD: parseInt(process.env.VOICE_BROWSER_TTS_THRESHOLD || '0'), // Always use Gemini TTS
   MAX_TTS_CALLS_PER_HOUR: parseInt(process.env.VOICE_MAX_TTS_PER_HOUR || '100'),
 };
 
@@ -88,22 +89,56 @@ interface VoiceSession {
   pingInterval: 25000, // Socket.io built-in ping
   pingTimeout: 10000,
 })
-export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
+export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, OnGatewayInit {
   @WebSocketServer()
   server!: Server;
 
   private sessions = new Map<string, VoiceSession>();
   private tenantSessionCounts = new Map<string, number>();
-  private ttsClient: TextToSpeechClient;
+  private genAI: GoogleGenerativeAI | null = null;
+  private ttsVoice = process.env.GEMINI_TTS_VOICE || 'Kore'; // Kore = American, firm
 
   constructor(
     private readonly voiceService: VoiceService,
     private readonly voiceLiveService: VoiceLiveService,
   ) {
-    this.ttsClient = new TextToSpeechClient();
+    // Initialize Gemini for TTS
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (apiKey) {
+      this.genAI = new GoogleGenerativeAI(apiKey);
+      console.log(`[VoiceGateway] Gemini TTS initialized with voice: ${this.ttsVoice}`);
+    } else {
+      console.warn('[VoiceGateway] GEMINI_API_KEY not set - TTS will use browser fallback');
+    }
 
     // Periodic cleanup of stale sessions (every 5 minutes)
     setInterval(() => this.cleanupStaleSessions(), 300000);
+  }
+
+  afterInit(server: Server) {
+    // Debug: Log all incoming messages at the server level
+    console.log('[VoiceGateway] Gateway initialized, setting up message listeners');
+    console.log('[VoiceGateway] Server namespaces:', (server as any)._nsps);
+
+    // Use this.server which is already scoped to the /voice namespace via @WebSocketGateway decorator
+    // Listen to connections on this namespace
+    this.server.on('connection', (socket) => {
+      console.log(`[VoiceGateway] Raw socket.io connection in /voice namespace: ${socket.id}`);
+
+      // Log all events on this socket
+      socket.onAny((event, ...args) => {
+        console.log(`[VoiceGateway] ====== RAW SOCKET EVENT ======`);
+        console.log(`[VoiceGateway] Event: ${event} from ${socket.id}`, {
+          argsCount: args.length,
+          firstArg: args[0] ? JSON.stringify(args[0]).substring(0, 500) : 'none',
+          allArgs: args.map((a, i) => ({
+            index: i,
+            type: typeof a,
+            value: JSON.stringify(a).substring(0, 200),
+          })),
+        });
+      });
+    });
   }
 
   /**
@@ -217,52 +252,106 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Convert text to speech with cost controls
+   * Convert text to speech using Gemini Native TTS
+   * Uses voices: Charon (default), Puck, Kore, Fenrir, Aoede
    * Returns null if limits exceeded or text too short (use browser TTS)
    */
   private async textToSpeechChunk(
     text: string,
     session: VoiceSession,
-  ): Promise<{ audio: Buffer | null; useBrowserTTS: boolean }> {
-    if (!text.trim()) return { audio: null, useBrowserTTS: false };
+  ): Promise<{ audio: Buffer | null; useBrowserTTS: boolean; format: string }> {
+    if (!text.trim()) return { audio: null, useBrowserTTS: false, format: 'wav' };
 
     // For very short responses, suggest browser TTS to save costs
     if (text.length < COST_LIMITS.USE_BROWSER_TTS_THRESHOLD) {
-      return { audio: null, useBrowserTTS: true };
+      return { audio: null, useBrowserTTS: true, format: 'wav' };
     }
 
     // Check hourly TTS limit
     if (!this.checkTTSLimit(session)) {
       console.log(`TTS hourly limit reached for tenant ${session.tenantId}`);
-      return { audio: null, useBrowserTTS: true };
+      return { audio: null, useBrowserTTS: true, format: 'wav' };
+    }
+
+    // Check if Gemini is initialized
+    if (!this.genAI) {
+      return { audio: null, useBrowserTTS: true, format: 'wav' };
     }
 
     try {
-      const [response] = await this.ttsClient.synthesizeSpeech({
-        input: { text },
-        voice: {
-          languageCode: 'en-US',
-          name: 'en-US-Chirp3-HD-Zephyr',
-        },
-        audioConfig: {
-          audioEncoding: 'MP3',
-          speakingRate: 1.0,
-          pitch: 0,
-          effectsProfileId: ['headphone-class-device'],
-        },
+      // Use Gemini TTS model with configured voice
+      const model = this.genAI.getGenerativeModel({
+        model: 'gemini-2.5-flash-preview-tts',
+      });
+
+      const result = await model.generateContent({
+        contents: [{ role: 'user', parts: [{ text }] }],
+        generationConfig: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: this.ttsVoice },
+            },
+          },
+        } as any, // Type assertion needed for TTS-specific config
       });
 
       session.ttsCallsThisHour++;
 
-      if (response.audioContent) {
-        return { audio: Buffer.from(response.audioContent as Uint8Array), useBrowserTTS: false };
+      // Extract audio from response
+      const audioData = result.response?.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      if (audioData?.data) {
+        // Gemini returns raw PCM audio - we need to wrap it in a WAV header for browser playback
+        const pcmData = Buffer.from(audioData.data, 'base64');
+        const wavBuffer = this.pcmToWav(pcmData);
+        return { audio: wavBuffer, useBrowserTTS: false, format: 'wav' };
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error('TTS chunk failed:', message);
+      console.error('[VoiceGateway] Gemini TTS failed:', message);
     }
 
-    return { audio: null, useBrowserTTS: true };
+    return { audio: null, useBrowserTTS: true, format: 'wav' };
+  }
+
+  /**
+   * Convert raw PCM data to WAV format with proper headers
+   * Gemini TTS returns 24kHz 16-bit mono PCM
+   */
+  private pcmToWav(pcmData: Buffer): Buffer {
+    const sampleRate = 24000; // Gemini TTS uses 24kHz
+    const numChannels = 1;    // Mono
+    const bitsPerSample = 16;
+    const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const dataSize = pcmData.length;
+    const headerSize = 44;
+    
+    const wavBuffer = Buffer.alloc(headerSize + dataSize);
+    
+    // RIFF header
+    wavBuffer.write('RIFF', 0);
+    wavBuffer.writeUInt32LE(36 + dataSize, 4);
+    wavBuffer.write('WAVE', 8);
+    
+    // fmt subchunk
+    wavBuffer.write('fmt ', 12);
+    wavBuffer.writeUInt32LE(16, 16);           // Subchunk1Size (16 for PCM)
+    wavBuffer.writeUInt16LE(1, 20);            // AudioFormat (1 = PCM)
+    wavBuffer.writeUInt16LE(numChannels, 22);  // NumChannels
+    wavBuffer.writeUInt32LE(sampleRate, 24);   // SampleRate
+    wavBuffer.writeUInt32LE(byteRate, 28);     // ByteRate
+    wavBuffer.writeUInt16LE(blockAlign, 32);   // BlockAlign
+    wavBuffer.writeUInt16LE(bitsPerSample, 34);// BitsPerSample
+    
+    // data subchunk
+    wavBuffer.write('data', 36);
+    wavBuffer.writeUInt32LE(dataSize, 40);
+    
+    // Copy PCM data
+    pcmData.copy(wavBuffer, headerSize);
+    
+    return wavBuffer;
   }
 
   /**
@@ -274,22 +363,43 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   async handleConnection(client: Socket) {
-    console.log(`Voice client connected: ${client.id}`);
+    // [Checkpoint 6] WebSocket connection received
+    console.log(`[VoiceGateway] Client connecting: ${client.id}`, {
+      transport: (client as any).transport?.name || 'unknown',
+      handshakeAuth: !!client.handshake.auth,
+      handshakeHeaders: Object.keys(client.handshake.headers || {}),
+    });
 
     const token =
       client.handshake.auth?.token ||
       client.handshake.headers?.authorization?.replace('Bearer ', '');
 
     if (!token) {
-      console.log(`Voice client ${client.id} - no token provided`);
+      console.warn(`[VoiceGateway] Client ${client.id} - no token provided`, {
+        hasAuthToken: !!client.handshake.auth?.token,
+        hasAuthHeader: !!client.handshake.headers?.authorization,
+      });
       client.emit('error', { message: 'Authentication required' });
       client.disconnect();
       return;
     }
 
     try {
+      // [Checkpoint 7] WebSocket authentication
+      console.log(`[VoiceGateway] Verifying token for ${client.id}`, {
+        hasToken: !!token,
+        tokenLength: token?.length || 0,
+        tokenPrefix: token?.substring(0, 20) || 'none',
+      });
+
       const decodedToken = await admin.auth().verifyIdToken(token);
       const tenantId = decodedToken.uid;
+
+      console.log(`[VoiceGateway] Token verified for ${client.id}`, {
+        tenantId,
+        uid: decodedToken.uid,
+        email: decodedToken.email || 'none',
+      });
 
       // Check concurrent session limit per tenant
       const currentSessions = this.tenantSessionCounts.get(tenantId) || 0;
@@ -347,16 +457,44 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         },
       });
 
-      console.log(`Voice client ${client.id} authenticated as ${tenantId}`);
+      console.log(`[VoiceGateway] Client ${client.id} authenticated as ${tenantId}`);
+      console.log(`[VoiceGateway] Active sessions: ${this.sessions.size}`);
+      console.log(`[VoiceGateway] Session details:`, {
+        clientId: client.id,
+        tenantId: session.tenantId,
+        documentId: session.documentId,
+        isActive: session.isActive,
+      });
+
+      // Debug: Set up message listener on this specific client
+      client.onAny((event, ...args) => {
+        console.log(`[VoiceGateway] Client ${client.id} event: ${event}`, {
+          argsCount: args.length,
+          firstArg: args[0] ? JSON.stringify(args[0]).substring(0, 300) : 'none',
+        });
+      });
+      console.log(`[VoiceGateway] Active sessions: ${this.sessions.size}`);
+      console.log(`[VoiceGateway] Session for ${client.id}:`, {
+        tenantId: session.tenantId,
+        documentId: session.documentId,
+        isActive: session.isActive,
+      });
     } catch (error) {
-      console.error(`Voice auth failed for ${client.id}:`, error);
+      console.error(`[VoiceGateway] Auth failed for ${client.id}`, {
+        error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorCode: (error as any)?.code || 'unknown',
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       client.emit('error', { message: 'Invalid token' });
       client.disconnect();
     }
   }
 
   handleDisconnect(client: Socket) {
-    console.log(`Voice client disconnected: ${client.id}`);
+    console.log(`[VoiceGateway] Client disconnected: ${client.id}`, {
+      reason: client.disconnected ? 'client' : 'server',
+    });
     // Cleanup Live API session if exists
     this.voiceLiveService.closeSession(client.id).catch(console.error);
     // Cleanup regular session
@@ -368,8 +506,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { documentId: string },
   ) {
+    console.log(`[VoiceGateway] ====== setDocument SUBSCRIBE HANDLER CALLED ======`);
+    console.log(`[VoiceGateway] setDocument received from ${client.id}`, {
+      documentId: data.documentId,
+      hasSession: this.sessions.has(client.id),
+      activeSessions: this.sessions.size,
+    });
+
     const session = this.sessions.get(client.id);
     if (!session) {
+      console.warn(`[VoiceGateway] setDocument from unauthenticated client ${client.id}`);
       client.emit('error', { message: 'Not authenticated' });
       return;
     }
@@ -377,7 +523,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.resetIdleTimeout(client, session);
     session.documentId = data.documentId || 'all';
     client.emit('documentSet', { documentId: session.documentId });
-    console.log(`Voice session ${client.id} set document: ${session.documentId}`);
+    console.log(`[VoiceGateway] Voice session ${client.id} set document: ${session.documentId}`);
   }
 
   @SubscribeMessage('heartbeatAck')
@@ -390,8 +536,21 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   @SubscribeMessage('voiceQuery')
   async handleVoiceQuery(@ConnectedSocket() client: Socket, @MessageBody() data: { text: string }) {
+    // [Checkpoint 11] Voice query received
+    console.log(`[VoiceGateway] ====== voiceQuery SUBSCRIBE HANDLER CALLED ======`);
+    console.log(`[VoiceGateway] voiceQuery received from ${client.id}`, {
+      textLength: data.text?.length || 0,
+      text: data.text?.substring(0, 100) || 'none',
+      dataType: typeof data,
+      dataKeys: data ? Object.keys(data) : 'no data',
+      fullData: JSON.stringify(data).substring(0, 500),
+    });
+    console.log(`[VoiceGateway] Active sessions count: ${this.sessions.size}`);
+    console.log(`[VoiceGateway] Session IDs:`, Array.from(this.sessions.keys()));
+
     const session = this.sessions.get(client.id);
     if (!session) {
+      console.warn(`[VoiceGateway] voiceQuery from unauthenticated client ${client.id}`);
       client.emit('error', { message: 'Not authenticated' });
       return;
     }
@@ -400,6 +559,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     this.resetIdleTimeout(client, session);
 
     if (!data.text?.trim()) {
+      console.warn(`[VoiceGateway] Empty query from ${client.id}`);
       client.emit('error', { message: 'Empty query' });
       return;
     }
@@ -407,6 +567,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Check rate limits
     const rateCheck = this.checkRateLimit(session);
     if (!rateCheck.allowed) {
+      console.warn(`[VoiceGateway] Rate limit hit for ${client.id}`, rateCheck);
       client.emit('rateLimited', { message: rateCheck.reason });
       return;
     }
@@ -424,17 +585,30 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     session.lastQueryAt = Date.now();
     session.isActive = true;
 
+    console.log(`[VoiceGateway] Starting voice query processing for ${client.id}`, {
+      tenantId: session.tenantId,
+      documentId: session.documentId,
+      queryLength: data.text.length,
+    });
+
     client.emit('voiceStart', { query: data.text });
 
     // Set query timeout
     session.queryTimeoutRef = setTimeout(() => {
       if (session.isActive) {
+        console.warn(`[VoiceGateway] Query timeout for ${client.id}`);
         session.isActive = false;
         client.emit('voiceError', { message: 'Query timeout - please try again' });
       }
     }, COST_LIMITS.QUERY_TIMEOUT_MS);
 
     try {
+      // [Checkpoint 12] Service method invoked
+      console.log(`[VoiceGateway] Calling voiceService.streamVoiceResponse`, {
+        tenantId: session.tenantId,
+        documentId: session.documentId,
+      });
+
       const stream = this.voiceService.streamVoiceResponse(
         session.tenantId,
         session.documentId,
@@ -481,11 +655,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
           for (const sentence of sentencesToSpeak) {
             if (!session.isActive) break;
 
-            const { audio, useBrowserTTS } = await this.textToSpeechChunk(sentence, session);
+            const { audio, useBrowserTTS, format } = await this.textToSpeechChunk(sentence, session);
             if (audio) {
               client.emit('voiceAudioChunk', {
                 audio: audio.toString('base64'),
-                format: 'mp3',
+                format,
                 index: audioChunkIndex++,
                 text: sentence,
               });
@@ -502,11 +676,11 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       // Speak remaining buffer
       if (session.isActive && sentenceBuffer.trim()) {
-        const { audio, useBrowserTTS } = await this.textToSpeechChunk(sentenceBuffer, session);
+        const { audio, useBrowserTTS, format } = await this.textToSpeechChunk(sentenceBuffer, session);
         if (audio) {
           client.emit('voiceAudioChunk', {
             audio: audio.toString('base64'),
-            format: 'mp3',
+            format,
             index: audioChunkIndex++,
             text: sentenceBuffer,
             isFinal: true,
@@ -520,23 +694,55 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       }
 
-      if (session.isActive) {
-        client.emit('voiceEnd', {
-          fullText: fullResponse,
+      // Always emit voiceEnd if we have a response, even if session was cancelled
+      if (fullResponse.length > 0 || audioChunkIndex > 0) {
+        console.log(`[VoiceGateway] Voice query completed for ${client.id}`, {
+          responseLength: fullResponse.length,
           audioChunks: audioChunkIndex,
           truncated: totalChars > COST_LIMITS.MAX_RESPONSE_CHARS,
+          wasActive: session.isActive,
         });
+        if (!client.disconnected) {
+          client.emit('voiceEnd', {
+            fullText: fullResponse,
+            audioChunks: audioChunkIndex,
+            truncated: totalChars > COST_LIMITS.MAX_RESPONSE_CHARS,
+          });
+        }
+      } else if (session.isActive) {
+        // No response received but session still active - emit empty response
+        console.warn(`[VoiceGateway] Voice query completed with no response for ${client.id}`);
+        if (!client.disconnected) {
+          client.emit('voiceEnd', {
+            fullText: '',
+            audioChunks: 0,
+            error: 'No response received from service',
+          });
+        }
       }
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Processing failed';
-      console.error(`Voice query error for ${client.id}:`, error);
-      client.emit('voiceError', { message });
+      console.error(`[VoiceGateway] Voice query error for ${client.id}`, {
+        error,
+        errorMessage: message,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      if (!client.disconnected) {
+        client.emit('voiceError', { message });
+        // Also emit voiceEnd to ensure frontend state is reset
+        client.emit('voiceEnd', {
+          fullText: '',
+          audioChunks: 0,
+          error: message,
+        });
+      }
     } finally {
       session.isActive = false;
       if (session.queryTimeoutRef) {
         clearTimeout(session.queryTimeoutRef);
         session.queryTimeoutRef = undefined;
       }
+      console.log(`[VoiceGateway] Voice query cleanup completed for ${client.id}`);
     }
   }
 
@@ -589,7 +795,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     // Set up message forwarding from Gemini Live API to client
     const geminiWs = this.voiceLiveService.getSession(client.id);
     if (geminiWs) {
-      geminiWs.on('message', (data: WebSocket.Data) => {
+      geminiWs.on('message', (data: string | Buffer) => {
         try {
           const message = JSON.parse(data.toString());
 
@@ -625,7 +831,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         }
       });
 
-      geminiWs.on('error', (error) => {
+      geminiWs.on('error', (error: Error) => {
         console.error(`[VoiceLive] Gemini WebSocket error:`, error);
         client.emit('liveError', { message: 'Connection error' });
       });
@@ -666,5 +872,4 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     await this.voiceLiveService.closeSession(client.id);
     client.emit('liveSessionStopped');
   }
-
 }
