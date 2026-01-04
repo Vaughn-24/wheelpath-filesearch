@@ -459,19 +459,18 @@ export default function ChatContainer({
   /**
    * Start capturing audio from microphone and streaming to Gemini Live API
    * Captures 16kHz 16-bit mono PCM
+   * Note: Microphone stream should already be acquired in handleVoiceAction
    */
   const startLiveAudioCapture = useCallback(async () => {
     try {
-      // Get microphone access
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-        }
-      });
-      mediaStreamRef.current = stream;
+      // Use already-acquired microphone stream (acquired during user click)
+      const stream = mediaStreamRef.current;
+      if (!stream) {
+        console.error('[ChatContainer] No microphone stream available');
+        setChatError('Microphone not ready. Please try again.');
+        stopLiveSession();
+        return;
+      }
 
       // Create AudioContext at 16kHz for Gemini
       const audioContext = new AudioContext({ sampleRate: 16000 });
@@ -509,7 +508,7 @@ export default function ChatContainer({
       console.log('[ChatContainer] Live audio capture started');
     } catch (err) {
       console.error('[ChatContainer] Failed to start audio capture:', err);
-      setChatError('Microphone access denied');
+      setChatError('Audio capture failed. Please try again.');
       stopLiveSession();
     }
   }, [liveSessionActive, stopLiveSession]);
@@ -993,55 +992,86 @@ export default function ChatContainer({
     if (voiceState === 'speaking') setVoiceState('idle');
   }, [voiceState]);
 
-  const handleVoiceAction = () => {
-    // If not in voice mode, switch to it first (this triggers socket connection)
-    if (inputMode !== 'voice') {
-      setInputMode('voice');
-      setVoiceState('connecting');
-      setVoiceConnectionStatus('Initializing voice service...');
-      // Wait for socket to connect, then start session (with retries for cold starts)
-      let retries = 0;
-      const maxRetries = 12; // Check every 1s for up to 12s
-      const checkAndStart = () => {
-        if (voiceSocketRef.current?.connected) {
-          console.log('[ChatContainer] Socket connected after mode switch, starting session');
-          setVoiceConnectionStatus('Starting voice session...');
-          voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
-        } else if (retries < maxRetries) {
-          retries++;
-          console.log(`[ChatContainer] Waiting for socket... (attempt ${retries}/${maxRetries})`);
-          // Update status message based on progress
-          if (retries <= 3) {
-            setVoiceConnectionStatus('Connecting to voice service...');
-          } else if (retries <= 6) {
-            setVoiceConnectionStatus('Waking up voice server...');
-          } else {
-            setVoiceConnectionStatus('Almost there, please wait...');
-          }
-          setTimeout(checkAndStart, 1000);
-        } else {
-          console.error('[ChatContainer] Socket still not connected after 12s');
-          setVoiceConnectionStatus('Connection failed. Tap to retry.');
-          setVoiceState('error');
-        }
-      };
-      setTimeout(checkAndStart, 1000);
+  const handleVoiceAction = async () => {
+    // If already in a live session, stop it
+    if (liveSessionActive) {
+      stopLiveSession();
       return;
     }
     
-    if (liveSessionActive) {
-      // Stop Live API session
-      stopLiveSession();
-    } else if (voiceState === 'listening') {
+    // If listening/speaking, stop those
+    if (voiceState === 'listening') {
       stopListening();
-    } else if (voiceState === 'speaking') {
+      return;
+    }
+    if (voiceState === 'speaking') {
       stopSpeaking();
       setVoiceState('idle');
-    } else if (voiceState === 'idle' || voiceState === 'error') {
-      // Start Live API session for low-latency bidirectional audio
-      setVoiceConnectionStatus('Starting voice session...');
-      startLiveSession();
+      return;
     }
+    
+    // Starting a new voice session - request mic permission FIRST (user gesture context)
+    setVoiceState('connecting');
+    setVoiceConnectionStatus('Requesting microphone access...');
+    
+    try {
+      // Request microphone NOW during user click (required by browsers)
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      });
+      mediaStreamRef.current = stream;
+      console.log('[ChatContainer] Microphone access granted');
+      setVoiceConnectionStatus('Microphone ready, connecting...');
+    } catch (err) {
+      console.error('[ChatContainer] Microphone access denied:', err);
+      setVoiceConnectionStatus('Microphone access denied. Please allow microphone access.');
+      setVoiceState('error');
+      setChatError('Microphone access is required for voice mode');
+      return;
+    }
+    
+    // Switch to voice mode if needed (triggers socket connection)
+    if (inputMode !== 'voice') {
+      setInputMode('voice');
+    }
+    
+    // Wait for socket to connect, then start session (with retries for cold starts)
+    let retries = 0;
+    const maxRetries = 12; // Check every 1s for up to 12s
+    const checkAndStart = () => {
+      if (voiceSocketRef.current?.connected) {
+        console.log('[ChatContainer] Socket connected, starting session');
+        setVoiceConnectionStatus('Starting voice session...');
+        voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
+      } else if (retries < maxRetries) {
+        retries++;
+        console.log(`[ChatContainer] Waiting for socket... (attempt ${retries}/${maxRetries})`);
+        // Update status message based on progress
+        if (retries <= 3) {
+          setVoiceConnectionStatus('Connecting to voice service...');
+        } else if (retries <= 6) {
+          setVoiceConnectionStatus('Waking up voice server...');
+        } else {
+          setVoiceConnectionStatus('Almost there, please wait...');
+        }
+        setTimeout(checkAndStart, 1000);
+      } else {
+        console.error('[ChatContainer] Socket still not connected after 12s');
+        setVoiceConnectionStatus('Connection failed. Tap to retry.');
+        setVoiceState('error');
+        // Clean up the mic stream we acquired
+        if (mediaStreamRef.current) {
+          mediaStreamRef.current.getTracks().forEach(track => track.stop());
+          mediaStreamRef.current = null;
+        }
+      }
+    };
+    setTimeout(checkAndStart, 500);
   };
 
   // Render helpers
