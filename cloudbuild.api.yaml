@@ -43,7 +43,7 @@ steps:
       - '10'
       - '--session-affinity'
       - '--set-env-vars'
-      - 'GCP_PROJECT=wheelpath-filesearch,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-filesearch-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_VOICE_MODEL=gemini-2.0-flash-live-001'
+      - 'GCP_PROJECT=wheelpath-filesearch,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-filesearch-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_VOICE_MODEL=gemini-2.0-flash-exp'
       - '--update-secrets'
       - 'ADMIN_API_KEY=ADMIN_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
