@@ -431,7 +431,10 @@ export default function ChatContainer({
    * Stop the live session and cleanup audio resources
    */
   const stopLiveSession = useCallback(() => {
-    console.log('[ChatContainer] Stopping live session');
+    // Only log if there's actually something to stop
+    if (liveSessionActive || processorRef.current || mediaStreamRef.current) {
+      console.log('[ChatContainer] Stopping live session');
+    }
     
     // Stop audio capture
     if (processorRef.current) {

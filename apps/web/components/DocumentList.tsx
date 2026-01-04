@@ -89,15 +89,21 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
         setLoading(false);
       },
       (error: any) => {
-        console.error('[DocumentList] ❌ Firestore query error:', {
-          code: error.code,
-          message: error.message,
-          tenantId: user.uid,
-        });
+        // Check if this is an expected index-missing error
+        const isIndexError = error.code === 'failed-precondition' || error.message?.includes('index') || error.code === 9;
         
-        // If index missing, try query without orderBy
-        if (error.code === 'failed-precondition' || error.message?.includes('index') || error.code === 9) {
-          console.warn('[DocumentList] Index missing or query failed, trying query without orderBy...');
+        if (!isIndexError) {
+          // Only log unexpected errors
+          console.error('[DocumentList] ❌ Firestore query error:', {
+            code: error.code,
+            message: error.message,
+            tenantId: user.uid,
+          });
+        }
+
+        // If index missing, try query without orderBy (this is expected until index is created)
+        if (isIndexError) {
+          // Silently fall back - this is expected behavior until composite index is created
           const simpleQuery = query(
             collection(db!, 'documents'),
             where('tenantId', '==', user.uid),
