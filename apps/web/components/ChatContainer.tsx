@@ -186,8 +186,10 @@ export default function ChatContainer({
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
-  const liveAudioQueueRef = useRef<Float32Array[]>([]);
+  const liveAudioQueueRef = useRef<{ data: Float32Array; sampleRate: number }[]>([]);
   const isPlayingLiveAudioRef = useRef(false);
+  const playbackContextRef = useRef<AudioContext | null>(null);
+  const nextPlayTimeRef = useRef(0);
 
   // PDF state
   const [page, setPage] = useState(1);
@@ -449,6 +451,14 @@ export default function ChatContainer({
       audioContextRef.current.close();
       audioContextRef.current = null;
     }
+    
+    // Stop audio playback
+    if (playbackContextRef.current && playbackContextRef.current.state !== 'closed') {
+      playbackContextRef.current.close();
+      playbackContextRef.current = null;
+    }
+    nextPlayTimeRef.current = 0;
+    isPlayingLiveAudioRef.current = false;
 
     // Tell server to stop
     if (voiceSocketRef.current?.connected) {
@@ -536,6 +546,7 @@ export default function ChatContainer({
   /**
    * Play PCM audio received from Gemini Live API
    * Gemini outputs 24kHz 16-bit mono PCM
+   * Uses a single AudioContext and schedules audio sequentially to avoid overlap
    */
   const playLivePCMAudio = useCallback((base64Audio: string, sampleRate: number = 24000) => {
     try {
@@ -553,21 +564,41 @@ export default function ChatContainer({
         float32Data[i] = int16Data[i] / 32768;
       }
 
-      // Create audio buffer and play
-      const playbackContext = new AudioContext({ sampleRate });
-      const audioBuffer = playbackContext.createBuffer(1, float32Data.length, sampleRate);
+      // Create or reuse playback AudioContext
+      if (!playbackContextRef.current || playbackContextRef.current.state === 'closed') {
+        playbackContextRef.current = new AudioContext({ sampleRate });
+        nextPlayTimeRef.current = playbackContextRef.current.currentTime;
+      }
+      
+      const ctx = playbackContextRef.current;
+      
+      // Create audio buffer
+      const audioBuffer = ctx.createBuffer(1, float32Data.length, sampleRate);
       audioBuffer.getChannelData(0).set(float32Data);
 
-      const source = playbackContext.createBufferSource();
+      const source = ctx.createBufferSource();
       source.buffer = audioBuffer;
-      source.connect(playbackContext.destination);
+      source.connect(ctx.destination);
+      
+      // Schedule this chunk to play after previous chunks
+      const startTime = Math.max(ctx.currentTime, nextPlayTimeRef.current);
+      const duration = audioBuffer.duration;
       
       setVoiceState('speaking');
+      isPlayingLiveAudioRef.current = true;
+      
       source.onended = () => {
-        playbackContext.close();
+        // Check if there's more audio queued
+        if (ctx.currentTime >= nextPlayTimeRef.current - 0.1) {
+          // No more audio playing
+          isPlayingLiveAudioRef.current = false;
+          setVoiceState('listening');
+        }
       };
       
-      source.start();
+      source.start(startTime);
+      nextPlayTimeRef.current = startTime + duration;
+      
     } catch (err) {
       console.error('[ChatContainer] Failed to play live audio:', err);
     }
