@@ -994,17 +994,23 @@ export default function ChatContainer({
     if (inputMode !== 'voice') {
       setInputMode('voice');
       setVoiceState('connecting');
-      // Wait for socket to connect, then start session
+      // Wait for socket to connect, then start session (with retries for cold starts)
+      let retries = 0;
+      const maxRetries = 10; // Check every 1s for up to 10s
       const checkAndStart = () => {
         if (voiceSocketRef.current?.connected) {
           console.log('[ChatContainer] Socket connected after mode switch, starting session');
           voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
+        } else if (retries < maxRetries) {
+          retries++;
+          console.log(`[ChatContainer] Waiting for socket... (attempt ${retries}/${maxRetries})`);
+          setTimeout(checkAndStart, 1000);
         } else {
-          console.error('[ChatContainer] Socket still not connected after mode switch');
+          console.error('[ChatContainer] Socket still not connected after 10s');
           setVoiceState('error');
         }
       };
-      setTimeout(checkAndStart, 1500);
+      setTimeout(checkAndStart, 1000);
       return;
     }
     
