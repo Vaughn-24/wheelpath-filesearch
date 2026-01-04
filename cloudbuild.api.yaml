@@ -43,9 +43,9 @@ steps:
       - '10'
       - '--session-affinity'
       - '--set-env-vars'
-      - 'GCP_PROJECT=wheelpath-filesearch,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-filesearch-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_API_KEY=AIzaSyDKLN4rkcEXOhwS5gvNNpAmlgPwRiEhiOA,GEMINI_VOICE_MODEL=gemini-3-pro-preview'
+      - 'GCP_PROJECT=wheelpath-filesearch,GCP_LOCATION=us-central1,GCS_BUCKET_NAME=wheelpath-filesearch-uploads-dev,NODE_ENV=production,VERTEX_INDEX_ENDPOINT_ID=6176249283310780416,VERTEX_DEPLOYED_INDEX_ID=wheelpath_streaming_deploy,VERTEX_PUBLIC_ENDPOINT_DOMAIN=1495366374.us-central1-945257727887.vdb.vertexai.goog,GEMINI_VOICE_MODEL=gemini-3-pro-preview'
       - '--update-secrets'
-      - 'ADMIN_API_KEY=ADMIN_API_KEY:latest'
+      - 'ADMIN_API_KEY=ADMIN_API_KEY:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
 images:
   - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-api:$COMMIT_SHA'

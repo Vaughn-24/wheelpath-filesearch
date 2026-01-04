@@ -14,6 +14,7 @@ import { Server, Socket } from 'socket.io';
 
 import { VoiceService } from './voice.service';
 import { VoiceLiveService } from './voice-live.service';
+import { RateLimitService } from '../common/rate-limit.service';
 
 /**
  * ============================================================================
@@ -23,6 +24,12 @@ import { VoiceLiveService } from './voice-live.service';
  * All values are configurable via environment variables.
  */
 const COST_LIMITS = {
+  // ============================================================================
+  // KILL SWITCHES - Set to 'true' to disable features entirely
+  // ============================================================================
+  VOICE_DISABLED: process.env.VOICE_DISABLED === 'true',
+  VOICE_LIVE_DISABLED: process.env.VOICE_LIVE_DISABLED === 'true',
+
   // Connection limits
   IDLE_TIMEOUT_MS: parseInt(process.env.VOICE_IDLE_TIMEOUT_MS || '300000'), // 5 minutes
   MAX_SESSION_DURATION_MS: parseInt(process.env.VOICE_MAX_SESSION_MS || '1800000'), // 30 minutes
@@ -38,6 +45,10 @@ const COST_LIMITS = {
   MAX_RESPONSE_CHARS: parseInt(process.env.VOICE_MAX_RESPONSE_CHARS || '2000'), // ~$0.032 max per response
   USE_BROWSER_TTS_THRESHOLD: parseInt(process.env.VOICE_BROWSER_TTS_THRESHOLD || '0'), // Always use Gemini TTS
   MAX_TTS_CALLS_PER_HOUR: parseInt(process.env.VOICE_MAX_TTS_PER_HOUR || '100'),
+
+  // Live API specific limits
+  MAX_LIVE_SESSIONS_PER_HOUR: parseInt(process.env.VOICE_MAX_LIVE_SESSIONS_PER_HOUR || '10'),
+  MAX_LIVE_AUDIO_CHUNKS_PER_SESSION: parseInt(process.env.VOICE_MAX_AUDIO_CHUNKS || '1000'), // ~4 minutes of audio
 };
 
 interface VoiceSession {
@@ -108,6 +119,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   constructor(
     private readonly voiceService: VoiceService,
     private readonly voiceLiveService: VoiceLiveService,
+    private readonly rateLimitService: RateLimitService,
   ) {
     // Initialize Gemini for TTS
     const apiKey = process.env.GEMINI_API_KEY;
@@ -370,6 +382,16 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   async handleConnection(client: Socket) {
+    // ============================================================================
+    // KILL SWITCH: Reject all voice connections if disabled
+    // ============================================================================
+    if (COST_LIMITS.VOICE_DISABLED) {
+      console.log(`[VoiceGateway] VOICE_DISABLED - rejecting connection ${client.id}`);
+      client.emit('error', { message: 'Voice service is temporarily disabled' });
+      client.disconnect();
+      return;
+    }
+
     // [Checkpoint 6] WebSocket connection received
     console.log(`[VoiceGateway] Client connecting: ${client.id}`, {
       transport: (client as any).transport?.name || 'unknown',
@@ -571,13 +593,22 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return;
     }
 
-    // Check rate limits
+    // Check rate limits (session-level)
     const rateCheck = this.checkRateLimit(session);
     if (!rateCheck.allowed) {
       console.warn(`[VoiceGateway] Rate limit hit for ${client.id}`, rateCheck);
       client.emit('rateLimited', { message: rateCheck.reason });
       return;
     }
+
+    // Check shared LLM limit (tenant-level hourly limit)
+    const llmCheck = this.rateLimitService.checkLLMLimit(session.tenantId);
+    if (!llmCheck.allowed) {
+      console.warn(`[VoiceGateway] LLM limit exceeded for tenant ${session.tenantId}`);
+      client.emit('rateLimited', { message: llmCheck.reason || 'Hourly limit reached. Please try again later.' });
+      return;
+    }
+    this.rateLimitService.recordLLMCall(session.tenantId);
 
     // Check if already processing
     if (session.isActive) {
@@ -777,11 +808,33 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() data: { documentId?: string },
   ) {
+    // ============================================================================
+    // KILL SWITCH: Reject Live API if disabled
+    // ============================================================================
+    if (COST_LIMITS.VOICE_LIVE_DISABLED) {
+      console.log(`[VoiceLive] VOICE_LIVE_DISABLED - rejecting Live session for ${client.id}`);
+      client.emit('liveError', { message: 'Live voice is temporarily disabled. Please use text chat.' });
+      return;
+    }
+
     const session = this.sessions.get(client.id);
     if (!session) {
       client.emit('error', { message: 'Not authenticated' });
       return;
     }
+
+    // ============================================================================
+    // RATE LIMITING: Check LLM limit before starting expensive Live session
+    // ============================================================================
+    const llmCheck = this.rateLimitService.checkLLMLimit(session.tenantId);
+    if (!llmCheck.allowed) {
+      console.log(`[VoiceLive] Rate limit exceeded for tenant ${session.tenantId}`);
+      client.emit('liveError', { message: llmCheck.reason || 'Rate limit exceeded. Please try again later.' });
+      return;
+    }
+
+    // Record the LLM call upfront (Live sessions are expensive)
+    this.rateLimitService.recordLLMCall(session.tenantId);
 
     this.resetIdleTimeout(client, session);
     const documentId = data.documentId || session.documentId || 'all';
