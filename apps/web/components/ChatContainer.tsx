@@ -169,6 +169,7 @@ export default function ChatContainer({
 
   // Voice mode state
   const [voiceState, setVoiceState] = useState<VoiceState>('idle');
+  const [voiceConnectionStatus, setVoiceConnectionStatus] = useState('');
   const [transcript, setTranscript] = useState('');
   const [voiceResponse, setVoiceResponse] = useState('');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -320,6 +321,7 @@ export default function ChatContainer({
             console.log('[ChatContainer] Live session ready', data);
             setLiveSessionActive(true);
             setVoiceState('listening');
+            setVoiceConnectionStatus(''); // Clear connection status
             startLiveAudioCapture();
           });
 
@@ -343,6 +345,8 @@ export default function ChatContainer({
           socket.on('liveError', (data: { message: string }) => {
             console.error('[ChatContainer] Live API error', data);
             setChatError(data.message);
+            setVoiceConnectionStatus(data.message || 'Voice error. Tap to retry.');
+            setVoiceState('error');
             stopLiveSession();
           });
 
@@ -994,19 +998,30 @@ export default function ChatContainer({
     if (inputMode !== 'voice') {
       setInputMode('voice');
       setVoiceState('connecting');
+      setVoiceConnectionStatus('Initializing voice service...');
       // Wait for socket to connect, then start session (with retries for cold starts)
       let retries = 0;
-      const maxRetries = 10; // Check every 1s for up to 10s
+      const maxRetries = 12; // Check every 1s for up to 12s
       const checkAndStart = () => {
         if (voiceSocketRef.current?.connected) {
           console.log('[ChatContainer] Socket connected after mode switch, starting session');
+          setVoiceConnectionStatus('Starting voice session...');
           voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
         } else if (retries < maxRetries) {
           retries++;
           console.log(`[ChatContainer] Waiting for socket... (attempt ${retries}/${maxRetries})`);
+          // Update status message based on progress
+          if (retries <= 3) {
+            setVoiceConnectionStatus('Connecting to voice service...');
+          } else if (retries <= 6) {
+            setVoiceConnectionStatus('Waking up voice server...');
+          } else {
+            setVoiceConnectionStatus('Almost there, please wait...');
+          }
           setTimeout(checkAndStart, 1000);
         } else {
-          console.error('[ChatContainer] Socket still not connected after 10s');
+          console.error('[ChatContainer] Socket still not connected after 12s');
+          setVoiceConnectionStatus('Connection failed. Tap to retry.');
           setVoiceState('error');
         }
       };
@@ -1024,6 +1039,7 @@ export default function ChatContainer({
       setVoiceState('idle');
     } else if (voiceState === 'idle' || voiceState === 'error') {
       // Start Live API session for low-latency bidirectional audio
+      setVoiceConnectionStatus('Starting voice session...');
       startLiveSession();
     }
   };
@@ -1078,6 +1094,8 @@ export default function ChatContainer({
 
   const getVoiceStatusText = (isDesktop: boolean = true) => {
     switch (voiceState) {
+      case 'connecting':
+        return 'Connecting to voice service...';
       case 'listening':
         return 'Listening...';
       case 'processing':
@@ -1415,10 +1433,41 @@ export default function ChatContainer({
                       <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
                     </svg>
                   )}
+                  {voiceState === 'connecting' && (
+                    <div className="relative">
+                      {/* Spinning ring */}
+                      <svg
+                        width="48"
+                        height="48"
+                        viewBox="0 0 48 48"
+                        className="animate-spin"
+                      >
+                        <circle
+                          cx="24"
+                          cy="24"
+                          r="20"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          fill="none"
+                          className="text-terracotta/30"
+                        />
+                        <circle
+                          cx="24"
+                          cy="24"
+                          r="20"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          fill="none"
+                          strokeDasharray="62.83 62.83"
+                          strokeLinecap="round"
+                          className="text-terracotta"
+                        />
+                      </svg>
+                    </div>
+                  )}
                   {(voiceState === 'idle' ||
                     voiceState === 'error' ||
-                    voiceState === 'processing' ||
-                    voiceState === 'connecting') && (
+                    voiceState === 'processing') && (
                     <svg
                       width="48"
                       height="48"
@@ -1437,8 +1486,14 @@ export default function ChatContainer({
               <p
                 className={`relative z-10 mt-xl text-heading font-medium ${voiceState === 'error' ? 'text-error' : 'text-foreground'}`}
               >
-                <span className="hidden lg:inline">{getVoiceStatusText(true)}</span>
-                <span className="lg:hidden">{getVoiceStatusText(false)}</span>
+                {voiceState === 'connecting' && voiceConnectionStatus ? (
+                  <span className="text-terracotta">{voiceConnectionStatus}</span>
+                ) : (
+                  <>
+                    <span className="hidden lg:inline">{getVoiceStatusText(true)}</span>
+                    <span className="lg:hidden">{getVoiceStatusText(false)}</span>
+                  </>
+                )}
               </p>
 
               {/* Live transcript */}
