@@ -274,32 +274,38 @@ When you need information from the user's uploaded documents, call the search_pr
       };
 
       // Initial setup message
+      // Use GEMINI_VOICE_MODEL env var or default to gemini-2.0-flash-live-001
+      const voiceModel = process.env.GEMINI_VOICE_MODEL || 'gemini-2.0-flash-live-001';
+      console.log(`[VoiceLive] Using voice model: ${voiceModel}`);
+      
       const setupMessage = {
         setup: {
-          model: 'models/gemini-2.0-flash-exp',
-          generationConfig: {
-            maxOutputTokens: 2000,
+          model: `models/${voiceModel}`,
+          generation_config: {
+            response_modalities: ['AUDIO'],
+            speech_config: {
+              voice_config: {
+                prebuilt_voice_config: {
+                  voice_name: 'Puck'
+                }
+              }
+            }
           },
-          systemInstruction: {
+          system_instruction: {
             parts: [{ text: this.buildVoiceSystemPrompt() }]
           },
           tools: [ragTool],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: {
-                voiceName: 'Puck'
-              }
-            }
-          }
         }
       };
 
       ws.on('open', () => {
         console.log(`[VoiceLive] Session ${sessionId} connected to Gemini Live API`);
+        console.log(`[VoiceLive] Sending setup message:`, JSON.stringify(setupMessage).substring(0, 200));
         ws.send(JSON.stringify(setupMessage));
       });
 
       ws.on('message', async (data: WebSocket.Data) => {
+        console.log(`[VoiceLive] Received message:`, data.toString().substring(0, 500));
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const message = JSON.parse(data.toString()) as any;
@@ -317,22 +323,20 @@ When you need information from the user's uploaded documents, call the search_pr
                   // Retrieve context using existing RAG system
                   const context = await this.retrieveContext(tenantId, documentId, query);
                   
-                  // Send function response back to Gemini
+                  // Send function response back to Gemini (tool_response format)
                   const functionResponse = {
-                    serverContent: {
-                      modelTurn: {
-                        parts: [{
-                          functionResponse: {
-                            name: functionCall.name,
-                            response: {
-                              context: context || 'No relevant information found in documents.'
-                            }
-                          }
-                        }]
-                      }
+                    tool_response: {
+                      function_responses: [{
+                        name: functionCall.name,
+                        id: functionCall.id || functionCall.name,
+                        response: {
+                          result: context || 'No relevant information found in documents.'
+                        }
+                      }]
                     }
                   };
                   
+                  console.log(`[VoiceLive] Sending function response:`, JSON.stringify(functionResponse).substring(0, 200));
                   ws.send(JSON.stringify(functionResponse));
                   
                   // Track metrics
@@ -361,8 +365,11 @@ When you need information from the user's uploaded documents, call the search_pr
         console.error(`[VoiceLive] WebSocket error for session ${sessionId}:`, error);
       });
 
-      ws.on('close', () => {
-        console.log(`[VoiceLive] Session ${sessionId} disconnected`);
+      ws.on('close', (code: number, reason: Buffer) => {
+        console.log(`[VoiceLive] Gemini WebSocket closed for ${sessionId}`, {
+          code,
+          reason: reason.toString(),
+        });
         this.sessions.delete(sessionId);
       });
 
