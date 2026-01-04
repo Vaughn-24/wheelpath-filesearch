@@ -86,10 +86,12 @@ interface VoiceSession {
   namespace: '/voice',
   cors: {
     origin: [
-      // Cloud Run URLs
+      // Cloud Run URLs (all possible formats)
       'https://wheelpath-web-412476503686.us-central1.run.app',
       'https://wheelpath-web-945257727887.us-central1.run.app',
+      'https://wheelpath-web-ankxe5sviq-uc.a.run.app',
       /https:\/\/wheelpath-web-.*\.run\.app$/,
+      /https:\/\/wheelpath-web-.*\.a\.run\.app$/,
       // Cloudflare Pages
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',
