@@ -185,7 +185,7 @@ export default function ChatContainer({
   const [liveSessionActive, setLiveSessionActive] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const audioWorkletNodeRef = useRef<AudioWorkletNode | null>(null);
   const liveAudioQueueRef = useRef<Float32Array[]>([]);
   const isPlayingLiveAudioRef = useRef(false);
 
@@ -432,14 +432,14 @@ export default function ChatContainer({
    */
   const stopLiveSession = useCallback(() => {
     // Only log if there's actually something to stop
-    if (liveSessionActive || processorRef.current || mediaStreamRef.current) {
+    if (liveSessionActive || audioWorkletNodeRef.current || mediaStreamRef.current) {
       console.log('[ChatContainer] Stopping live session');
     }
     
-    // Stop audio capture
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current = null;
+    // Stop audio capture (AudioWorkletNode)
+    if (audioWorkletNodeRef.current) {
+      audioWorkletNodeRef.current.disconnect();
+      audioWorkletNodeRef.current = null;
     }
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
@@ -461,7 +461,7 @@ export default function ChatContainer({
 
   /**
    * Start capturing audio from microphone and streaming to Gemini Live API
-   * Captures 16kHz 16-bit mono PCM
+   * Captures 16kHz 16-bit mono PCM using AudioWorkletNode (modern API)
    * Note: Microphone stream should already be acquired in handleVoiceAction
    */
   const startLiveAudioCapture = useCallback(async () => {
@@ -479,42 +479,59 @@ export default function ChatContainer({
       const audioContext = new AudioContext({ sampleRate: 16000 });
       audioContextRef.current = audioContext;
 
-      const source = audioContext.createMediaStreamSource(stream);
-      
-      // Use ScriptProcessorNode for raw PCM access (deprecated but widely supported)
-      // Buffer size of 4096 gives ~256ms chunks at 16kHz
-      const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (e) => {
-        if (!liveSessionActive || !voiceSocketRef.current?.connected) return;
-
-        const inputData = e.inputBuffer.getChannelData(0);
+      // Load the AudioWorklet processor module
+      try {
+        await audioContext.audioWorklet.addModule('/audio-processor.js');
+      } catch (workletErr) {
+        console.warn('[ChatContainer] AudioWorklet not supported, falling back to ScriptProcessorNode');
+        // Fallback to ScriptProcessorNode for older browsers
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
         
-        // Convert Float32 to Int16 PCM
-        const pcmData = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        processor.onaudioprocess = (e) => {
+          if (!voiceSocketRef.current?.connected) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcmData = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            const s = Math.max(-1, Math.min(1, inputData[i]));
+            pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+          }
+          const buffer = new Uint8Array(pcmData.buffer);
+          const base64 = btoa(String.fromCharCode(...buffer));
+          voiceSocketRef.current.emit('sendLiveAudio', { audio: base64 });
+        };
+
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        console.log('[ChatContainer] Live audio capture started (ScriptProcessor fallback)');
+        return;
+      }
+
+      // Create AudioWorkletNode
+      const workletNode = new AudioWorkletNode(audioContext, 'audio-capture-processor');
+      audioWorkletNodeRef.current = workletNode;
+
+      // Handle messages from the worklet (audio data)
+      workletNode.port.onmessage = (event) => {
+        if (event.data.type === 'audio' && voiceSocketRef.current?.connected) {
+          const pcmData = new Uint8Array(event.data.data);
+          const base64 = btoa(String.fromCharCode(...pcmData));
+          voiceSocketRef.current.emit('sendLiveAudio', { audio: base64 });
         }
-
-        // Convert to base64 and send
-        const buffer = new Uint8Array(pcmData.buffer);
-        const base64 = btoa(String.fromCharCode(...buffer));
-        
-        voiceSocketRef.current.emit('sendLiveAudio', { audio: base64 });
       };
 
-      source.connect(processor);
-      processor.connect(audioContext.destination);
+      // Connect the audio graph
+      const source = audioContext.createMediaStreamSource(stream);
+      source.connect(workletNode);
+      workletNode.connect(audioContext.destination);
 
-      console.log('[ChatContainer] Live audio capture started');
+      console.log('[ChatContainer] Live audio capture started (AudioWorklet)');
     } catch (err) {
       console.error('[ChatContainer] Failed to start audio capture:', err);
       setChatError('Audio capture failed. Please try again.');
       stopLiveSession();
     }
-  }, [liveSessionActive, stopLiveSession]);
+  }, [stopLiveSession]);
 
   /**
    * Play PCM audio received from Gemini Live API
