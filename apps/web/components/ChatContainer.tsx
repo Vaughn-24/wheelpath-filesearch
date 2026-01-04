@@ -252,8 +252,7 @@ export default function ChatContainer({
               socketId: socket.id,
               connected: socket.connected,
             });
-            // Don't reset to idle if we're connecting - let the live session start flow continue
-            setVoiceState((current) => current === 'connecting' ? 'connecting' : 'idle');
+            setVoiceState('idle');
           });
 
           socket.on('connect_error', (err) => {
@@ -374,14 +373,6 @@ export default function ChatContainer({
       }
     };
   }, [inputMode, user, documentId]);
-
-  // Auto-start live session when socket connects and voiceState is 'connecting'
-  useEffect(() => {
-    if (voiceState === 'connecting' && voiceSocketRef.current?.connected) {
-      console.log('[ChatContainer] Socket now connected, starting live session...');
-      startLiveSession();
-    }
-  }, [voiceState, startLiveSession]);
 
   // Play audio chunks from queue
   const playNextAudioChunk = useCallback(() => {
@@ -1002,9 +993,18 @@ export default function ChatContainer({
     // If not in voice mode, switch to it first (this triggers socket connection)
     if (inputMode !== 'voice') {
       setInputMode('voice');
-      // Socket will connect via useEffect, then we need to start the session
-      // Set a state to trigger startLiveSession once connected
       setVoiceState('connecting');
+      // Wait for socket to connect, then start session
+      const checkAndStart = () => {
+        if (voiceSocketRef.current?.connected) {
+          console.log('[ChatContainer] Socket connected after mode switch, starting session');
+          voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
+        } else {
+          console.error('[ChatContainer] Socket still not connected after mode switch');
+          setVoiceState('error');
+        }
+      };
+      setTimeout(checkAndStart, 1500);
       return;
     }
     
