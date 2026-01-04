@@ -384,6 +384,7 @@ When you need information from the user's uploaded documents, call the search_pr
 
   /**
    * Send audio data to Gemini Live API
+   * Expects 16kHz 16-bit mono PCM from browser
    */
   async sendAudio(sessionId: string, audioData: Buffer): Promise<{ success: boolean; error?: string }> {
     const session = this.sessions.get(sessionId);
@@ -395,16 +396,13 @@ When you need information from the user's uploaded documents, call the search_pr
       // Convert audio to base64 for transmission
       const audioBase64 = audioData.toString('base64');
       
+      // Gemini Live API expects realtimeInput for audio streaming
       const message = {
-        clientContent: {
-          modelTurn: {
-            parts: [{
-              inlineData: {
-                mimeType: 'audio/pcm',
-                data: audioBase64
-              }
-            }]
-          }
+        realtimeInput: {
+          mediaChunks: [{
+            mimeType: 'audio/pcm;rate=16000',
+            data: audioBase64
+          }]
         }
       };
 

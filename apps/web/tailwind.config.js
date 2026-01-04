@@ -65,6 +65,7 @@ module.exports = {
       },
       fontSize: {
         'display-xl': ['48px', { lineHeight: '1.1', letterSpacing: '-0.02em', fontWeight: '600' }],
+        'display-lg': ['42px', { lineHeight: '1.15', letterSpacing: '-0.02em', fontWeight: '600' }],
         display: ['36px', { lineHeight: '1.2', letterSpacing: '-0.02em', fontWeight: '600' }],
         'heading-lg': ['24px', { lineHeight: '1.3', letterSpacing: '-0.02em', fontWeight: '600' }],
         heading: ['20px', { lineHeight: '1.4', letterSpacing: '-0.02em', fontWeight: '500' }],

@@ -99,7 +99,7 @@ export default function DocumentList({ onSelect }: DocumentListProps) {
         if (error.code === 'failed-precondition' || error.message?.includes('index') || error.code === 9) {
           console.warn('[DocumentList] Index missing or query failed, trying query without orderBy...');
           const simpleQuery = query(
-            collection(db, 'documents'),
+            collection(db!, 'documents'),
             where('tenantId', '==', user.uid),
           );
           

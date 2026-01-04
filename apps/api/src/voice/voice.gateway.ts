@@ -75,12 +75,19 @@ interface VoiceSession {
   namespace: '/voice',
   cors: {
     origin: [
+      // Cloud Run URLs
+      'https://wheelpath-web-412476503686.us-central1.run.app',
       'https://wheelpath-web-945257727887.us-central1.run.app',
+      /https:\/\/wheelpath-web-.*\.run\.app$/,
+      // Cloudflare Pages
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',
       /https:\/\/.*\.wheelpath2-ai\.pages\.dev$/,
+      // Custom domains
       'https://dev.wheelpath.ai',
       'https://wheelpath.ai',
+      'https://www.wheelpath.ai',
+      // Local development
       'http://localhost:3000',
       'http://localhost:3002',
     ],
@@ -799,35 +806,54 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         try {
           const message = JSON.parse(data.toString());
 
-          // Forward audio responses to client
+          // Handle setup completion
+          if (message.setupComplete) {
+            console.log(`[VoiceLive] Setup complete for ${client.id}`);
+            return;
+          }
+
+          // Forward audio responses to client (check both response formats)
+          // Format 1: serverContent.modelTurn.parts[].inlineData
           if (message.serverContent?.modelTurn?.parts) {
             for (const part of message.serverContent.modelTurn.parts) {
-              if (part.inlineData?.mimeType === 'audio/pcm') {
-                // Send raw PCM audio to client
+              if (part.inlineData?.mimeType?.startsWith('audio/')) {
                 client.emit('liveAudio', {
-                  audio: part.inlineData.data, // Base64 encoded PCM
+                  audio: part.inlineData.data,
                   format: 'pcm',
-                  sampleRate: 24000, // Gemini Live outputs 24kHz
+                  sampleRate: 24000,
+                });
+              }
+              // Handle text responses
+              if (part.text) {
+                client.emit('liveText', { text: part.text });
+              }
+              // Handle function calls
+              if (part.functionCall) {
+                client.emit('liveFunctionCall', {
+                  name: part.functionCall.name,
+                  args: part.functionCall.args,
                 });
               }
             }
           }
 
-          // Forward function call requests (for debugging)
-          if (message.serverContent?.modelTurn?.parts) {
-            for (const part of message.serverContent.modelTurn.parts) {
-              if (part.functionCall) {
-                client.emit('liveFunctionCall', {
-                  name: part.functionCall.name,
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  args: part.functionCall.args as any,
-                });
-              }
-            }
+          // Format 2: Direct audio output (some Gemini models)
+          if (message.audio?.data) {
+            client.emit('liveAudio', {
+              audio: message.audio.data,
+              format: 'pcm',
+              sampleRate: 24000,
+            });
           }
+
+          // Handle turn completion
+          if (message.serverContent?.turnComplete) {
+            client.emit('liveTurnComplete');
+          }
+
         } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : 'Unknown error';
-          console.error(`[VoiceLive] Error forwarding message:`, message);
+          const errMsg = error instanceof Error ? error.message : 'Unknown error';
+          console.error(`[VoiceLive] Error forwarding message:`, errMsg);
         }
       });
 

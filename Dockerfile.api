@@ -5,60 +5,72 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy workspace configuration
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY tsconfig.base.json ./
+# Copy entire project
+COPY . .
 
-# Copy package.json files for all workspaces
-COPY apps/api/package.json ./apps/api/
-COPY packages/schemas/package.json ./packages/schemas/
-COPY packages/validation/package.json ./packages/validation/
-COPY packages/types/package.json ./packages/types/
-COPY packages/shared/package.json ./packages/shared/
-
-# Install dependencies
+# Install all dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy source files
-COPY apps/api ./apps/api
-COPY packages/schemas ./packages/schemas
-COPY packages/validation ./packages/validation
-COPY packages/types ./packages/types
-COPY packages/shared ./packages/shared
+# Clean any stale build artifacts and build packages from scratch
+RUN rm -rf packages/schemas/dist packages/schemas/tsconfig.tsbuildinfo
+RUN cd packages/schemas && pnpm run build && ls -la dist/
 
-# Build packages in order
-WORKDIR /app/packages/schemas
-RUN pnpm run build
+RUN rm -rf packages/types/dist packages/types/tsconfig.tsbuildinfo
+RUN cd packages/types && pnpm run build && ls -la dist/
 
-WORKDIR /app/packages/types
-RUN pnpm run build
+RUN rm -rf packages/validation/dist packages/validation/tsconfig.tsbuildinfo
+RUN cd packages/validation && pnpm run build && ls -la dist/
 
-WORKDIR /app/packages/validation
-RUN pnpm run build
+# Manually create symlinks for workspace packages in root node_modules
+RUN mkdir -p node_modules/@wheelpath && \
+    rm -rf node_modules/@wheelpath/schemas node_modules/@wheelpath/types node_modules/@wheelpath/validation && \
+    ln -sf /app/packages/schemas node_modules/@wheelpath/schemas && \
+    ln -sf /app/packages/types node_modules/@wheelpath/types && \
+    ln -sf /app/packages/validation node_modules/@wheelpath/validation
 
-WORKDIR /app/packages/shared
-RUN pnpm run build || true
+# Also create symlinks in api's node_modules
+RUN mkdir -p apps/api/node_modules/@wheelpath && \
+    rm -rf apps/api/node_modules/@wheelpath/schemas apps/api/node_modules/@wheelpath/types apps/api/node_modules/@wheelpath/validation && \
+    ln -sf /app/packages/schemas apps/api/node_modules/@wheelpath/schemas && \
+    ln -sf /app/packages/types apps/api/node_modules/@wheelpath/types && \
+    ln -sf /app/packages/validation apps/api/node_modules/@wheelpath/validation
 
-WORKDIR /app/apps/api
-RUN pnpm run build
+# Verify the setup
+RUN ls -la node_modules/@wheelpath/schemas/dist/
+
+# Clean API build artifacts and build
+RUN rm -rf apps/api/dist apps/api/tsconfig.tsbuildinfo apps/api/tsconfig.build.tsbuildinfo
+RUN cd apps/api && pnpm run build && ls -la dist/ && cat dist/main.js | head -5
 
 # --- Production Stage ---
 FROM node:20-alpine AS runner
 
-# Install pnpm for production
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
 WORKDIR /app
 
+# Copy the entire built structure
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/pnpm-workspace.yaml ./
+
+# Copy API
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
+
+# Copy packages with their built dist folders
 COPY --from=builder /app/packages ./packages
 
-ENV NODE_ENV=production
-ENV PORT=3000
+# Recreate symlinks in production
+RUN mkdir -p node_modules/@wheelpath && \
+    rm -rf node_modules/@wheelpath/schemas node_modules/@wheelpath/types node_modules/@wheelpath/validation && \
+    ln -sf /app/packages/schemas node_modules/@wheelpath/schemas && \
+    ln -sf /app/packages/types node_modules/@wheelpath/types && \
+    ln -sf /app/packages/validation node_modules/@wheelpath/validation
 
-CMD ["node", "apps/api/dist/src/main.js"]
+ENV NODE_ENV=production
+ENV PORT=8080
+
+# Verify dist exists in production image
+RUN ls -la apps/api/dist/ && ls -la apps/api/dist/main.js
+
+CMD ["node", "apps/api/dist/main.js"]

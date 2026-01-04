@@ -1,0 +1,7 @@
+name = "wheelpath-landing"
+compatibility_date = "2026-01-02"
+pages_build_output_dir = ".vercel/output/static"
+
+[vars]
+NEXT_PUBLIC_API_URL = "https://api.wheelpath.ai"
+

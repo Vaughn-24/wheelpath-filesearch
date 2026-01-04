@@ -1,1 +1,24 @@
-{ "compilerOptions": { "target": "ES2022", "module": "CommonJS", "strict": true, "noImplicitAny": true, "noUnusedLocals": true, "noUnusedParameters": true, "noFallthroughCasesInSwitch": true, "esModuleInterop": true, "skipLibCheck": true, "forceConsistentCasingInFileNames": true, "declaration": true, "sourceMap": true, "outDir": "dist", "moduleResolution": "Node", "resolveJsonModule": true, "incremental": true, "types": ["node"], "experimentalDecorators": true, "emitDecoratorMetadata": true }, "exclude": ["node_modules", "dist"] }
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "strict": true,
+    "noImplicitAny": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "declaration": true,
+    "sourceMap": true,
+    "outDir": "dist",
+    "moduleResolution": "Node",
+    "resolveJsonModule": true,
+    "incremental": true,
+    "types": ["node"],
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true
+  },
+  "exclude": ["node_modules", "dist"]
+}

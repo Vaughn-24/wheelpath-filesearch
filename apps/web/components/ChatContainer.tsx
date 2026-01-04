@@ -179,6 +179,14 @@ export default function ChatContainer({
   const audioQueueRef = useRef<Array<{ audio: string; format: string; index: number }>>([]);
   const isPlayingAudioRef = useRef(false);
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  
+  // Gemini Live API state
+  const [liveSessionActive, setLiveSessionActive] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const liveAudioQueueRef = useRef<Float32Array[]>([]);
+  const isPlayingLiveAudioRef = useRef(false);
 
   // PDF state
   const [page, setPage] = useState(1);
@@ -307,6 +315,43 @@ export default function ChatContainer({
             console.error('[ChatContainer] Voice socket error event', error);
           });
 
+          // Gemini Live API event handlers
+          socket.on('liveSessionReady', (data: { documentId: string }) => {
+            console.log('[ChatContainer] Live session ready', data);
+            setLiveSessionActive(true);
+            setVoiceState('listening');
+            startLiveAudioCapture();
+          });
+
+          socket.on('liveAudio', (data: { audio: string; format: string; sampleRate: number }) => {
+            // Decode and play PCM audio from Gemini
+            playLivePCMAudio(data.audio, data.sampleRate);
+          });
+
+          socket.on('liveText', (data: { text: string }) => {
+            setVoiceResponse((prev) => prev + data.text);
+          });
+
+          socket.on('liveTurnComplete', () => {
+            console.log('[ChatContainer] Live turn complete');
+            // Ready for next user input
+            if (liveSessionActive) {
+              setVoiceState('listening');
+            }
+          });
+
+          socket.on('liveError', (data: { message: string }) => {
+            console.error('[ChatContainer] Live API error', data);
+            setChatError(data.message);
+            stopLiveSession();
+          });
+
+          socket.on('liveDisconnected', () => {
+            console.log('[ChatContainer] Live session disconnected');
+            setLiveSessionActive(false);
+            setVoiceState('idle');
+          });
+
           voiceSocketRef.current = socket;
         } catch (err) {
           console.error('[ChatContainer] Failed to connect voice socket', {
@@ -360,17 +405,163 @@ export default function ChatContainer({
     });
   }, []);
 
+  // ============================================================================
+  // GEMINI LIVE API FUNCTIONS
+  // ============================================================================
+
+  /**
+   * Start a Gemini Live API session for bidirectional audio streaming
+   */
+  const startLiveSession = useCallback(() => {
+    if (!voiceSocketRef.current?.connected) {
+      console.error('[ChatContainer] Cannot start live session - socket not connected');
+      return;
+    }
+
+    console.log('[ChatContainer] Starting Gemini Live API session');
+    setVoiceState('connecting');
+    voiceSocketRef.current.emit('startLiveSession', { documentId: documentId || 'all' });
+  }, [documentId]);
+
+  /**
+   * Stop the live session and cleanup audio resources
+   */
+  const stopLiveSession = useCallback(() => {
+    console.log('[ChatContainer] Stopping live session');
+    
+    // Stop audio capture
+    if (processorRef.current) {
+      processorRef.current.disconnect();
+      processorRef.current = null;
+    }
+    if (mediaStreamRef.current) {
+      mediaStreamRef.current.getTracks().forEach(track => track.stop());
+      mediaStreamRef.current = null;
+    }
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close();
+      audioContextRef.current = null;
+    }
+
+    // Tell server to stop
+    if (voiceSocketRef.current?.connected) {
+      voiceSocketRef.current.emit('stopLiveSession');
+    }
+
+    setLiveSessionActive(false);
+    setVoiceState('idle');
+  }, []);
+
+  /**
+   * Start capturing audio from microphone and streaming to Gemini Live API
+   * Captures 16kHz 16-bit mono PCM
+   */
+  const startLiveAudioCapture = useCallback(async () => {
+    try {
+      // Get microphone access
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          sampleRate: 16000,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        }
+      });
+      mediaStreamRef.current = stream;
+
+      // Create AudioContext at 16kHz for Gemini
+      const audioContext = new AudioContext({ sampleRate: 16000 });
+      audioContextRef.current = audioContext;
+
+      const source = audioContext.createMediaStreamSource(stream);
+      
+      // Use ScriptProcessorNode for raw PCM access (deprecated but widely supported)
+      // Buffer size of 4096 gives ~256ms chunks at 16kHz
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
+
+      processor.onaudioprocess = (e) => {
+        if (!liveSessionActive || !voiceSocketRef.current?.connected) return;
+
+        const inputData = e.inputBuffer.getChannelData(0);
+        
+        // Convert Float32 to Int16 PCM
+        const pcmData = new Int16Array(inputData.length);
+        for (let i = 0; i < inputData.length; i++) {
+          const s = Math.max(-1, Math.min(1, inputData[i]));
+          pcmData[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+        }
+
+        // Convert to base64 and send
+        const buffer = new Uint8Array(pcmData.buffer);
+        const base64 = btoa(String.fromCharCode(...buffer));
+        
+        voiceSocketRef.current.emit('sendLiveAudio', { audio: base64 });
+      };
+
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      console.log('[ChatContainer] Live audio capture started');
+    } catch (err) {
+      console.error('[ChatContainer] Failed to start audio capture:', err);
+      setChatError('Microphone access denied');
+      stopLiveSession();
+    }
+  }, [liveSessionActive, stopLiveSession]);
+
+  /**
+   * Play PCM audio received from Gemini Live API
+   * Gemini outputs 24kHz 16-bit mono PCM
+   */
+  const playLivePCMAudio = useCallback((base64Audio: string, sampleRate: number = 24000) => {
+    try {
+      // Decode base64 to ArrayBuffer
+      const binaryString = atob(base64Audio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      // Convert Int16 to Float32 for Web Audio API
+      const int16Data = new Int16Array(bytes.buffer);
+      const float32Data = new Float32Array(int16Data.length);
+      for (let i = 0; i < int16Data.length; i++) {
+        float32Data[i] = int16Data[i] / 32768;
+      }
+
+      // Create audio buffer and play
+      const playbackContext = new AudioContext({ sampleRate });
+      const audioBuffer = playbackContext.createBuffer(1, float32Data.length, sampleRate);
+      audioBuffer.getChannelData(0).set(float32Data);
+
+      const source = playbackContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(playbackContext.destination);
+      
+      setVoiceState('speaking');
+      source.onended = () => {
+        playbackContext.close();
+      };
+      
+      source.start();
+    } catch (err) {
+      console.error('[ChatContainer] Failed to play live audio:', err);
+    }
+  }, []);
+
   // Cleanup voice on mode switch
   useEffect(() => {
     if (inputMode === 'text') {
       stopListening();
       stopSpeaking();
+      stopLiveSession();
       if (voiceSocketRef.current) {
         voiceSocketRef.current.disconnect();
         voiceSocketRef.current = null;
       }
     }
-  }, [inputMode]);
+  }, [inputMode, stopLiveSession]);
 
   // Text input handlers
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
@@ -799,12 +990,17 @@ export default function ChatContainer({
   }, [voiceState]);
 
   const handleVoiceAction = () => {
-    if (voiceState === 'listening') stopListening();
-    else if (voiceState === 'speaking') {
+    if (liveSessionActive) {
+      // Stop Live API session
+      stopLiveSession();
+    } else if (voiceState === 'listening') {
+      stopListening();
+    } else if (voiceState === 'speaking') {
       stopSpeaking();
       setVoiceState('idle');
     } else if (voiceState === 'idle' || voiceState === 'error') {
-      startListening();
+      // Start Live API session for low-latency bidirectional audio
+      startLiveSession();
     }
   };
 

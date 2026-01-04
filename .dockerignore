@@ -1,0 +1,32 @@
+# Git
+.git
+.gitignore
+
+# Node modules (will be installed in container)
+**/node_modules
+
+# Development files
+**/*.log
+.env*
+!.env.example
+
+# IDE
+.vscode
+.idea
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build outputs (handled by Docker build process)
+# apps/web excluded for API builds but needed for web builds
+
+# Test files
+**/__tests__
+**/*.spec.ts
+**/*.test.ts
+coverage
+
+# Docs
+docs

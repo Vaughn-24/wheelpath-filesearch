@@ -16,7 +16,9 @@ async function bootstrap() {
       // Cloud Run URLs
       'https://wheelpath-web-945257727887.us-central1.run.app',
       'https://wheelpath-web-l2phyyl55q-uc.a.run.app',
-      /https:\/\/wheelpath-web-.*\.run\.app$/,
+      'https://wheelpath-web-ankxe5sviq-uc.a.run.app',
+      'https://wheelpath-api-412476503686.us-central1.run.app',
+      /https:\/\/wheelpath-.*\.run\.app$/,
       // Cloudflare Pages URLs
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',

@@ -19,3 +19,7 @@ debug-*.md
 
 wheelpath-ai/
 wheelpath-ai/
+
+# Build outputs
+apps/web/out/
+*.tsbuildinfo

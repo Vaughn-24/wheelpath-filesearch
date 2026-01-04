@@ -1,6 +1,3 @@
-substitutions:
-  _FIREBASE_API_KEY: ''  # Set via Cloud Build trigger or --substitutions flag
-
 steps:
   # Build the Web image
   - name: 'gcr.io/cloud-builders/docker'
@@ -13,7 +10,7 @@ steps:
       - '-f'
       - 'Dockerfile.web'
       - '--build-arg'
-      - 'NEXT_PUBLIC_API_URL=https://wheelpath-api-945257727887.us-central1.run.app'
+      - 'NEXT_PUBLIC_API_URL=https://wheelpath-api-412476503686.us-central1.run.app'
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_PROJECT_ID=wheelpath-filesearch'
       - '--build-arg'
@@ -21,7 +18,7 @@ steps:
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=wheelpath-filesearch.firebasestorage.app'
       - '--build-arg'
-      - 'NEXT_PUBLIC_FIREBASE_API_KEY=${_FIREBASE_API_KEY}'
+      - 'NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyDFgOEFCQLXh3cmz0W-sWDdOVegwr16zOg'
       - '--build-arg'
       - 'NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=412476503686'
       - '--build-arg'
@@ -59,10 +56,12 @@ steps:
       - '10'
       - '--set-env-vars'
       - 'NODE_ENV=production'
+      - '--port'
+      - '8080'
 
 images:
   - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-web:$COMMIT_SHA'
   - 'us-central1-docker.pkg.dev/wheelpath-filesearch/docker-api/wheelpath-web:latest'
 
 options:
-  logging: CLOUD_LOGGING_ONLY
+  logging: GCS_ONLY

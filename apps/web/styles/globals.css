@@ -297,3 +297,165 @@
     opacity: 0.7;
   }
 }
+
+/* ===== LANDING PAGE STYLES ===== */
+@layer components {
+  /* Landing Hero Background */
+  .landing-hero {
+    background: linear-gradient(180deg, #1A1612 0%, #2C2419 100%);
+  }
+  
+  /* Subtle Grid Pattern */
+  .landing-grid-pattern {
+    background-image: 
+      linear-gradient(rgba(194, 112, 62, 0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(194, 112, 62, 0.03) 1px, transparent 1px);
+    background-size: 60px 60px;
+  }
+  
+  /* Hero Orb Animation */
+  .landing-orb-hero {
+    animation: orbFloat 6s ease-in-out infinite, orbGlow 3s ease-in-out infinite;
+  }
+  
+  /* Hero Hexbolt Animation */
+  .landing-hexbolt {
+    animation: hexFloat 6s ease-in-out infinite, hexGlow 3s ease-in-out infinite;
+  }
+  
+  /* Background Floating Orbs */
+  .landing-orb-float {
+    animation: orbFloat 8s ease-in-out infinite;
+  }
+  
+  .landing-orb-float-delayed {
+    animation: orbFloat 10s ease-in-out infinite;
+    animation-delay: -4s;
+  }
+  
+  /* Staggered Fade-In Animations */
+  .landing-fade-in {
+    animation: landingFadeIn 0.8s ease-out forwards;
+    opacity: 0;
+  }
+  
+  .landing-fade-in-delayed {
+    animation: landingFadeIn 0.8s ease-out 0.2s forwards;
+    opacity: 0;
+  }
+  
+  .landing-fade-in-delayed-2 {
+    animation: landingFadeIn 0.8s ease-out 0.4s forwards;
+    opacity: 0;
+  }
+}
+
+/* Landing Page Keyframes */
+@keyframes orbFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes orbGlow {
+  0%, 100% {
+    box-shadow: 0 0 40px rgba(194, 112, 62, 0.3), 0 0 80px rgba(212, 160, 48, 0.2);
+  }
+  50% {
+    box-shadow: 0 0 60px rgba(194, 112, 62, 0.5), 0 0 120px rgba(212, 160, 48, 0.3);
+  }
+}
+
+@keyframes hexFloat {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-15px);
+  }
+}
+
+@keyframes hexGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 30px rgba(194, 112, 62, 0.4)) drop-shadow(0 0 60px rgba(212, 160, 48, 0.2));
+  }
+  50% {
+    filter: drop-shadow(0 0 50px rgba(194, 112, 62, 0.6)) drop-shadow(0 0 100px rgba(212, 160, 48, 0.4));
+  }
+}
+
+@keyframes landingFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ===== SCROLL REVEAL ANIMATIONS ===== */
+@layer components {
+  /* Base reveal state - start slightly offset, animate to final position */
+  .reveal-on-scroll {
+    opacity: 0.4;
+    transition: opacity 0.7s ease-out, transform 0.7s ease-out;
+  }
+  
+  /* Revealed state */
+  .reveal-on-scroll.revealed {
+    opacity: 1;
+  }
+  
+  /* Fade up variant */
+  .reveal-fade-up {
+    transform: translateY(30px);
+  }
+  .reveal-fade-up.revealed {
+    transform: translateY(0);
+  }
+  
+  /* Slide from left */
+  .reveal-slide-left {
+    transform: translateX(-40px);
+  }
+  .reveal-slide-left.revealed {
+    transform: translateX(0);
+  }
+  
+  /* Slide from right */
+  .reveal-slide-right {
+    transform: translateX(40px);
+  }
+  .reveal-slide-right.revealed {
+    transform: translateX(0);
+  }
+  
+  /* Scale up variant */
+  .reveal-scale {
+    transform: scale(0.9);
+  }
+  .reveal-scale.revealed {
+    transform: scale(1);
+  }
+  
+  /* Rotate in variant */
+  .reveal-rotate {
+    transform: rotate(-5deg) scale(0.95);
+  }
+  .reveal-rotate.revealed {
+    transform: rotate(0) scale(1);
+  }
+  
+  /* Fallback: auto-reveal after page load for non-JS or slow intersection */
+  @media (prefers-reduced-motion: reduce) {
+    .reveal-on-scroll {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
