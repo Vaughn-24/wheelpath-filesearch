@@ -283,54 +283,69 @@ Remember: Get Clarity. Go Build.`;
       });
 
       ws.on('message', async (data: WebSocket.Data) => {
-        console.log(`[VoiceLive] Received message:`, data.toString().substring(0, 500));
+        const rawMsg = data.toString();
+        console.log(`[VoiceLive] ========== RECEIVED MESSAGE ==========`);
+        console.log(`[VoiceLive] Raw (first 1000 chars):`, rawMsg.substring(0, 1000));
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const message = JSON.parse(data.toString()) as any;
+          const message = JSON.parse(rawMsg) as any;
           
-          // Handle function calls (RAG retrieval)
-          if (message.serverContent?.modelTurn?.parts) {
-            for (const part of message.serverContent.modelTurn.parts) {
-              if (part.functionCall) {
-                const functionCall = part.functionCall;
-                
-                if (functionCall.name === 'search_project_documents') {
-                  const query = functionCall.args?.query || '';
-                  console.log(`[VoiceLive] Function call: search_project_documents("${query}")`);
-                  
-                  // Retrieve context using existing RAG system
-                  const context = await this.retrieveContext(tenantId, documentId, query);
-                  
-                  // Send function response back to Gemini (tool_response format)
-                  const functionResponse = {
-                    tool_response: {
-                      function_responses: [{
-                        name: functionCall.name,
-                        id: functionCall.id || functionCall.name,
-                        response: {
-                          result: context || 'No relevant information found in documents.'
-                        }
-                      }]
+          // Log message structure for debugging
+          console.log(`[VoiceLive] Message keys:`, Object.keys(message));
+          if (message.serverContent) {
+            console.log(`[VoiceLive] serverContent keys:`, Object.keys(message.serverContent));
+            if (message.serverContent.modelTurn) {
+              console.log(`[VoiceLive] modelTurn keys:`, Object.keys(message.serverContent.modelTurn));
+            }
+          }
+          if (message.toolCall) {
+            console.log(`[VoiceLive] Found toolCall:`, JSON.stringify(message.toolCall).substring(0, 300));
+          }
+          
+          // Handle function calls - check multiple possible formats
+          const parts = message.serverContent?.modelTurn?.parts || 
+                        message.toolCall?.functionCalls ||
+                        (message.toolCall ? [message.toolCall] : []);
+          
+          for (const part of parts) {
+            // Check both functionCall and function_call formats
+            const functionCall = part.functionCall || part.function_call || part;
+            
+            if (functionCall.name === 'search_project_documents') {
+              const query = functionCall.args?.query || '';
+              console.log(`[VoiceLive] Function call: search_project_documents("${query}")`);
+              
+              // Retrieve context using existing RAG system
+              const context = await this.retrieveContext(tenantId, documentId, query);
+              
+              // Send function response back to Gemini (tool_response format)
+              const functionResponse = {
+                tool_response: {
+                  function_responses: [{
+                    name: functionCall.name,
+                    id: functionCall.id || functionCall.name,
+                    response: {
+                      result: context || 'No relevant information found in documents.'
                     }
-                  };
-                  
-                  console.log(`[VoiceLive] Sending function response:`, JSON.stringify(functionResponse).substring(0, 200));
-                  ws.send(JSON.stringify(functionResponse));
-                  
-                  // Track metrics
-                  this.metricsService.track({
-                    type: 'voice_query',
-                    tenantId,
-                    documentId: documentId === 'all' ? undefined : documentId,
-                    metadata: {
-                      hasContext: context.length > 0,
-                    }
-                  }).catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : 'Unknown error';
-                    console.warn('Voice metrics failed:', msg);
-                  });
+                  }]
                 }
-              }
+              };
+              
+              console.log(`[VoiceLive] Sending function response:`, JSON.stringify(functionResponse).substring(0, 200));
+              ws.send(JSON.stringify(functionResponse));
+              
+              // Track metrics
+              this.metricsService.track({
+                type: 'voice_query',
+                tenantId,
+                documentId: documentId === 'all' ? undefined : documentId,
+                metadata: {
+                  hasContext: context.length > 0,
+                }
+              }).catch((err: unknown) => {
+                const msg = err instanceof Error ? err.message : 'Unknown error';
+                console.warn('Voice metrics failed:', msg);
+              });
             }
           }
         } catch (error: unknown) {
