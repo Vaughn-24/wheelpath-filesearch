@@ -216,7 +216,116 @@ Remember: Get Clarity. Go Build.`;
   }
 
   /**
-   * Create a Gemini Live API WebSocket session with RAG function calling
+   * Get document summaries/content for pre-loading into voice session
+   */
+  private async getDocumentSummaries(tenantId: string, documentId: string): Promise<string> {
+    try {
+      let docIds: string[] = [];
+      
+      if (documentId && documentId !== 'all') {
+        docIds = [documentId];
+      } else {
+        // Get all ready documents for this tenant
+        const docsSnap = await this.firestore.collection('documents')
+          .where('tenantId', '==', tenantId)
+          .where('status', '==', 'ready')
+          .limit(5)
+          .get();
+        docsSnap.forEach(d => docIds.push(d.id));
+      }
+      
+      console.log(`[VoiceLive] Found ${docIds.length} documents for context`);
+      
+      if (docIds.length === 0) {
+        return 'No documents have been uploaded yet.';
+      }
+
+      let context = '';
+      
+      for (const docId of docIds) {
+        const docSnap = await this.firestore.collection('documents').doc(docId).get();
+        const docData = docSnap.data();
+        const title = docData?.title || 'Untitled Document';
+        
+        // Get chunks for this document
+        const chunksSnap = await this.firestore
+          .collection('documents').doc(docId)
+          .collection('chunks')
+          .orderBy('chunkIndex')
+          .limit(10) // Get up to 10 chunks per document
+          .get();
+        
+        if (!chunksSnap.empty) {
+          context += `\n\n=== DOCUMENT: ${title} ===\n`;
+          chunksSnap.docs.forEach((chunk) => {
+            const data = chunk.data();
+            const pageNum = data.pageNumber || 1;
+            context += `[Page ${pageNum}]: ${data.text}\n`;
+          });
+        }
+      }
+      
+      // Limit context to prevent token overflow
+      if (context.length > 15000) {
+        context = context.substring(0, 15000) + '\n\n[Content truncated for voice session]';
+      }
+      
+      return context || 'Documents are being processed.';
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      console.error('[VoiceLive] Failed to get document summaries:', message);
+      return 'Unable to load documents at this time.';
+    }
+  }
+
+  /**
+   * Build system prompt with pre-loaded document context
+   */
+  private buildVoiceSystemPromptWithContext(documentContext: string): string {
+    return `You are WheelPath Voice — the calm, experienced field mentor for construction professionals.
+
+The user's project documents have been pre-loaded below. Use this information to answer their questions accurately.
+
+=== USER'S PROJECT DOCUMENTS ===
+${documentContext}
+=== END OF DOCUMENTS ===
+
+TONE:
+- Calm, steady, and reassuring
+- Practical and solutions-oriented  
+- Friendly but professional
+- Never rushed, never panicked
+
+RESPONSE PATTERN:
+1. Listen to the user's question
+2. Find the relevant information from the documents above
+3. Give a clear, concise answer
+4. Suggest a next step when appropriate
+
+AVOID:
+- Guessing or making up information
+- Saying you can't access documents (you have them above!)
+- Markdown or formatting (this is spoken audio)
+- Citations like [1] or [2]
+- Long-winded responses
+
+IMPORTANT RULES:
+- If the user asks about something in their documents, reference the specific information
+- If the information isn't in the documents, say "I didn't find that in your uploaded documents"
+- Keep responses brief and actionable - this is voice, not text
+- Use page numbers when relevant: "On page 3, it shows..."
+
+COMMON PHRASES:
+- "According to your documents..."
+- "On page [X] of [document name]..."
+- "Here's what your project shows..."
+- "You're good to go."
+
+Remember: Get Clarity. Go Build.`;
+  }
+
+  /**
+   * Create a Gemini Live API WebSocket session with pre-loaded document context
    */
   async createLiveSession(
     sessionId: string,
@@ -228,33 +337,22 @@ Remember: Get Clarity. Go Build.`;
     }
 
     try {
+      // Pre-fetch document context for the user's documents
+      console.log(`[VoiceLive] Pre-fetching document context for tenant ${tenantId}`);
+      const documentContext = await this.getDocumentSummaries(tenantId, documentId);
+      console.log(`[VoiceLive] Got document context: ${documentContext.length} chars`);
+
       // Gemini Live API WebSocket endpoint
       const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${this.geminiApiKey}`;
       
       const ws = new WebSocket(wsUrl);
 
-      // Build RAG tool definition
-      const ragTool = {
-        functionDeclarations: [{
-          name: 'search_project_documents',
-          description: 'Search through uploaded project documents to find relevant information. Use this when the user asks about project details, specifications, RFIs, or any information that might be in their documents.',
-          parameters: {
-            type: 'object',
-            properties: {
-              query: {
-                type: 'string',
-                description: 'The search query to find relevant document chunks'
-              }
-            },
-            required: ['query']
-          }
-        }]
-      };
-
-      // Initial setup message
-      // Use GEMINI_VOICE_MODEL env var or default to gemini-2.0-flash-live-001
+      // Initial setup message - include document context directly in system prompt
       const voiceModel = process.env.GEMINI_VOICE_MODEL || 'gemini-2.0-flash-live-001';
       console.log(`[VoiceLive] Using voice model: ${voiceModel}`);
+      
+      // Build system prompt with pre-loaded document context
+      const systemPrompt = this.buildVoiceSystemPromptWithContext(documentContext);
       
       const setupMessage = {
         setup: {
@@ -270,9 +368,8 @@ Remember: Get Clarity. Go Build.`;
             }
           },
           system_instruction: {
-            parts: [{ text: this.buildVoiceSystemPrompt() }]
+            parts: [{ text: systemPrompt }]
           },
-          tools: [ragTool],
         }
       };
 
@@ -284,69 +381,32 @@ Remember: Get Clarity. Go Build.`;
 
       ws.on('message', async (data: WebSocket.Data) => {
         const rawMsg = data.toString();
-        console.log(`[VoiceLive] ========== RECEIVED MESSAGE ==========`);
-        console.log(`[VoiceLive] Raw (first 1000 chars):`, rawMsg.substring(0, 1000));
+        // Only log non-audio messages in detail
+        if (!rawMsg.includes('"inlineData"') || rawMsg.length < 500) {
+          console.log(`[VoiceLive] Message: ${rawMsg.substring(0, 300)}`);
+        }
         try {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const message = JSON.parse(rawMsg) as any;
           
-          // Log message structure for debugging
-          console.log(`[VoiceLive] Message keys:`, Object.keys(message));
-          if (message.serverContent) {
-            console.log(`[VoiceLive] serverContent keys:`, Object.keys(message.serverContent));
-            if (message.serverContent.modelTurn) {
-              console.log(`[VoiceLive] modelTurn keys:`, Object.keys(message.serverContent.modelTurn));
-            }
-          }
-          if (message.toolCall) {
-            console.log(`[VoiceLive] Found toolCall:`, JSON.stringify(message.toolCall).substring(0, 300));
+          // Log setup completion
+          if (message.setupComplete) {
+            console.log(`[VoiceLive] Setup complete for session ${sessionId}`);
           }
           
-          // Handle function calls - check multiple possible formats
-          const parts = message.serverContent?.modelTurn?.parts || 
-                        message.toolCall?.functionCalls ||
-                        (message.toolCall ? [message.toolCall] : []);
+          // Log turn completion
+          if (message.serverContent?.turnComplete) {
+            console.log(`[VoiceLive] Turn complete for session ${sessionId}`);
+          }
           
-          for (const part of parts) {
-            // Check both functionCall and function_call formats
-            const functionCall = part.functionCall || part.function_call || part;
-            
-            if (functionCall.name === 'search_project_documents') {
-              const query = functionCall.args?.query || '';
-              console.log(`[VoiceLive] Function call: search_project_documents("${query}")`);
-              
-              // Retrieve context using existing RAG system
-              const context = await this.retrieveContext(tenantId, documentId, query);
-              
-              // Send function response back to Gemini (tool_response format)
-              const functionResponse = {
-                tool_response: {
-                  function_responses: [{
-                    name: functionCall.name,
-                    id: functionCall.id || functionCall.name,
-                    response: {
-                      result: context || 'No relevant information found in documents.'
-                    }
-                  }]
-                }
-              };
-              
-              console.log(`[VoiceLive] Sending function response:`, JSON.stringify(functionResponse).substring(0, 200));
-              ws.send(JSON.stringify(functionResponse));
-              
-              // Track metrics
-              this.metricsService.track({
-                type: 'voice_query',
-                tenantId,
-                documentId: documentId === 'all' ? undefined : documentId,
-                metadata: {
-                  hasContext: context.length > 0,
-                }
-              }).catch((err: unknown) => {
-                const msg = err instanceof Error ? err.message : 'Unknown error';
-                console.warn('Voice metrics failed:', msg);
-              });
-            }
+          // Track voice usage metrics
+          if (message.serverContent?.modelTurn?.parts) {
+            this.metricsService.track({
+              type: 'voice_query',
+              tenantId,
+              documentId: documentId === 'all' ? undefined : documentId,
+              metadata: { hasContext: documentContext.length > 100 }
+            }).catch(() => {}); // Ignore metric errors
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'Unknown error';
