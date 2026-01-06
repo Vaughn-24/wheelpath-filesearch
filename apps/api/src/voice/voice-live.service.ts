@@ -176,6 +176,7 @@ export class VoiceLiveService {
 
   /**
    * Get document summaries/content for pre-loading into voice session
+   * Uses Gemini File API to extract text from the document
    */
   private async getDocumentSummaries(tenantId: string, documentId: string): Promise<string> {
     try {
@@ -193,42 +194,88 @@ export class VoiceLiveService {
         docsSnap.forEach(d => docIds.push(d.id));
       }
       
-      console.log(`[VoiceLive] Found ${docIds.length} documents for context`);
+      console.log(`[VoiceLive] Found ${docIds.length} documents for tenant ${tenantId}`);
       
       if (docIds.length === 0) {
         return 'No documents have been uploaded yet.';
       }
 
       let context = '';
+      const { GoogleGenerativeAI } = require('@google/generative-ai');
+      const { GoogleAIFileManager } = require('@google/generative-ai/server');
+      const genAI = new GoogleGenerativeAI(this.geminiApiKey);
+      const fileManager = new GoogleAIFileManager(this.geminiApiKey);
+      const extractModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
       
       for (const docId of docIds) {
         const docSnap = await this.firestore.collection('documents').doc(docId).get();
         const docData = docSnap.data();
         const title = docData?.title || 'Untitled Document';
         
-        // Get chunks for this document
-        const chunksSnap = await this.firestore
-          .collection('documents').doc(docId)
-          .collection('chunks')
-          .orderBy('chunkIndex')
-          .limit(10) // Get up to 10 chunks per document
-          .get();
+        console.log(`[VoiceLive] Processing document: ${title}, hasGeminiUri: ${!!docData?.geminiFileUri}`);
         
-        if (!chunksSnap.empty) {
-          context += `\n\n=== DOCUMENT: ${title} ===\n`;
-          chunksSnap.docs.forEach((chunk) => {
-            const data = chunk.data();
-            const pageNum = data.pageNumber || 1;
-            context += `[Page ${pageNum}]: ${data.text}\n`;
-          });
+        if (docData?.geminiFileUri) {
+          try {
+            // Check if file is still valid
+            const fileName = docData.geminiFileUri.split('/').pop();
+            if (fileName) {
+              try {
+                await fileManager.getFile(fileName);
+              } catch {
+                console.log(`[VoiceLive] File expired for ${title}, skipping`);
+                context += `\n\n=== DOCUMENT: ${title} ===\n[Document available but needs reprocessing]\n`;
+                continue;
+              }
+            }
+            
+            // Extract text content using Gemini
+            console.log(`[VoiceLive] Extracting text from ${title}...`);
+            const result = await extractModel.generateContent([
+              {
+                fileData: {
+                  fileUri: docData.geminiFileUri,
+                  mimeType: docData.mimeType || 'application/pdf',
+                }
+              },
+              { text: 'Extract ALL the text content from this document. Include all details, numbers, dates, and specifications. Format as plain text.' }
+            ]);
+            
+            const extractedText = result.response.text();
+            console.log(`[VoiceLive] Extracted ${extractedText.length} chars from ${title}`);
+            
+            if (extractedText && extractedText.length > 0) {
+              context += `\n\n=== DOCUMENT: ${title} ===\n${extractedText}\n`;
+            }
+          } catch (error: any) {
+            console.error(`[VoiceLive] Failed to extract from ${title}:`, error.message);
+            context += `\n\n=== DOCUMENT: ${title} ===\n[Error loading document content]\n`;
+          }
+        } else {
+          // Try to get from chunks as fallback
+          const chunksSnap = await this.firestore
+            .collection('documents').doc(docId)
+            .collection('chunks')
+            .limit(10)
+            .get();
+          
+          if (!chunksSnap.empty) {
+            context += `\n\n=== DOCUMENT: ${title} ===\n`;
+            chunksSnap.docs.forEach((chunk) => {
+              const data = chunk.data();
+              context += `${data.text}\n`;
+            });
+          } else {
+            context += `\n\n=== DOCUMENT: ${title} ===\n[Document uploaded but content not yet processed]\n`;
+          }
         }
       }
       
       // Limit context to prevent token overflow
-      if (context.length > 15000) {
-        context = context.substring(0, 15000) + '\n\n[Content truncated for voice session]';
+      if (context.length > 20000) {
+        context = context.substring(0, 20000) + '\n\n[Content truncated for voice session]';
       }
       
+      console.log(`[VoiceLive] Total context: ${context.length} chars`);
       return context || 'Documents are being processed.';
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Unknown error';
