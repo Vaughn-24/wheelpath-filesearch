@@ -26,21 +26,13 @@ COPY packages/validation ./packages/validation
 COPY packages/types ./packages/types
 COPY packages/shared ./packages/shared
 
-# Build packages in order
-WORKDIR /app/packages/schemas
-RUN pnpm run build
-
-WORKDIR /app/packages/types
-RUN pnpm run build
-
-WORKDIR /app/packages/validation
-RUN pnpm run build
-
-WORKDIR /app/packages/shared
-RUN pnpm run build || true
-
-WORKDIR /app/apps/api
-RUN pnpm run build
+# Build all packages from workspace root to ensure proper resolution
+WORKDIR /app
+RUN pnpm --filter @wheelpath/schemas run build && \
+    pnpm --filter @wheelpath/types run build && \
+    pnpm --filter @wheelpath/validation run build && \
+    pnpm --filter @wheelpath/shared run build || true && \
+    pnpm --filter @wheelpath/api run build
 
 # --- Production Stage ---
 FROM node:20-alpine AS runner
