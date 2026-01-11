@@ -13,8 +13,7 @@ steps:
 
   # Push the image
   - name: 'gcr.io/cloud-builders/docker'
-    args:
-      ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/docker-api/wheelpath-api:$COMMIT_SHA']
+    args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/docker-api/wheelpath-api:$COMMIT_SHA']
 
   - name: 'gcr.io/cloud-builders/docker'
     args: ['push', 'us-central1-docker.pkg.dev/${PROJECT_ID}/docker-api/wheelpath-api:latest']
@@ -43,7 +42,7 @@ steps:
       - '10'
       - '--session-affinity'
       - '--set-env-vars'
-      - 'GCP_PROJECT=${PROJECT_ID},GCP_LOCATION=us-central1,NODE_ENV=production,GEMINI_MODEL=gemini-2.5-flash-lite'
+      - 'GCP_PROJECT=${PROJECT_ID},GCP_LOCATION=us-central1,NODE_ENV=production,GEMINI_MODEL=gemini-2.5-flash-preview-04-17,GEMINI_VOICE=Orbit'
       - '--update-secrets'
       - 'GEMINI_API_KEY=GEMINI_API_KEY:latest'
 
