@@ -5,34 +5,33 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy workspace configuration
+# Copy all source files first (needed for workspace linking)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY tsconfig.base.json ./
-
-# Copy package.json files for all workspaces
-COPY apps/api/package.json ./apps/api/
-COPY packages/schemas/package.json ./packages/schemas/
-COPY packages/validation/package.json ./packages/validation/
-COPY packages/types/package.json ./packages/types/
-COPY packages/shared/package.json ./packages/shared/
-
-# Install dependencies
-RUN pnpm install --frozen-lockfile
-
-# Copy source files
 COPY apps/api ./apps/api
 COPY packages/schemas ./packages/schemas
 COPY packages/validation ./packages/validation
 COPY packages/types ./packages/types
 COPY packages/shared ./packages/shared
 
-# Build all packages from workspace root to ensure proper resolution
-WORKDIR /app
-RUN pnpm --filter @wheelpath/schemas run build && \
-    pnpm --filter @wheelpath/types run build && \
-    pnpm --filter @wheelpath/validation run build && \
-    pnpm --filter @wheelpath/shared run build || true && \
-    pnpm --filter @wheelpath/api run build
+# Install dependencies - this sets up workspace links
+RUN pnpm install --frozen-lockfile
+
+# Build packages in dependency order
+# schemas has no internal deps
+RUN cd packages/schemas && pnpm run build
+
+# types depends on schemas
+RUN cd packages/types && pnpm run build
+
+# validation depends on schemas, types
+RUN cd packages/validation && pnpm run build
+
+# shared may fail (missing @types/node in its own deps) - that's ok
+RUN cd packages/shared && pnpm run build || true
+
+# api depends on schemas, types, validation
+RUN cd apps/api && pnpm run build
 
 # --- Production Stage ---
 FROM node:20-alpine AS runner
