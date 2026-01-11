@@ -41,6 +41,8 @@ steps:
       - '--max-instances'
       - '10'
       - '--session-affinity'
+      - '--port'
+      - '3000'
       - '--set-env-vars'
       - 'GCP_PROJECT=${PROJECT_ID},GCP_LOCATION=us-central1,NODE_ENV=production,GEMINI_MODEL=gemini-2.5-flash-preview-04-17,GEMINI_VOICE=Orbit'
       - '--update-secrets'

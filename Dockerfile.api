@@ -11,22 +11,11 @@ COPY tsconfig.base.json ./
 COPY apps/api ./apps/api
 COPY packages ./packages
 
-# Debug: check what's in packages/schemas before install
-RUN ls -la packages/schemas/
-
 # Install dependencies - this creates workspace symlinks
 RUN pnpm install --frozen-lockfile
 
-# Debug: check what's in packages/schemas after install
-RUN ls -la packages/schemas/
-
-# Build schemas with verbose output
-RUN cd packages/schemas && npx tsc -p ./tsconfig.json --listEmittedFiles
-
-# Debug: verify dist was created
-RUN ls -la packages/schemas/ && ls -la packages/schemas/dist/
-
-# Build other packages
+# Build packages in dependency order
+RUN cd packages/schemas && pnpm run build
 RUN cd packages/types && pnpm run build
 RUN cd packages/validation && pnpm run build
 RUN cd packages/shared && pnpm run build || true
