@@ -20,10 +20,8 @@ RUN cd packages/types && pnpm run build
 RUN cd packages/validation && pnpm run build
 RUN cd packages/shared && pnpm run build || true
 
-# Debug: verify dist exists and symlinks are correct
-RUN ls -la packages/schemas/dist/ && \
-    ls -la node_modules/@wheelpath/ && \
-    ls -la apps/api/node_modules/@wheelpath/ || true
+# Debug: verify dist exists
+RUN ls -la packages/schemas/dist/
 
 # Build API
 RUN cd apps/api && pnpm run build

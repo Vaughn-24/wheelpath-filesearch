@@ -13,3 +13,4 @@ coverage/
 
 wheelpath-ai/
 wheelpath-ai/
+*.tsbuildinfo
