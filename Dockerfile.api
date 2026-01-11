@@ -5,38 +5,32 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy all source files first (needed for workspace linking)
+# Copy workspace configuration and ALL source first
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY tsconfig.base.json ./
 COPY apps/api ./apps/api
-COPY packages/schemas ./packages/schemas
-COPY packages/validation ./packages/validation
-COPY packages/types ./packages/types
-COPY packages/shared ./packages/shared
+COPY packages ./packages
 
-# Install dependencies - this sets up workspace links
+# Install dependencies - this creates workspace symlinks
 RUN pnpm install --frozen-lockfile
 
 # Build packages in dependency order
-# schemas has no internal deps
 RUN cd packages/schemas && pnpm run build
-
-# types depends on schemas
 RUN cd packages/types && pnpm run build
-
-# validation depends on schemas, types
 RUN cd packages/validation && pnpm run build
-
-# shared may fail (missing @types/node in its own deps) - that's ok
 RUN cd packages/shared && pnpm run build || true
 
-# api depends on schemas, types, validation
+# Debug: verify dist exists and symlinks are correct
+RUN ls -la packages/schemas/dist/ && \
+    ls -la node_modules/@wheelpath/ && \
+    ls -la apps/api/node_modules/@wheelpath/ || true
+
+# Build API
 RUN cd apps/api && pnpm run build
 
 # --- Production Stage ---
 FROM node:20-alpine AS runner
 
-# Install pnpm for production
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
