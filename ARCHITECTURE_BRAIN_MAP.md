@@ -115,22 +115,27 @@
 
 | Setting           | Value                                 |
 | ----------------- | ------------------------------------- |
-| **SDK**           | `@google/generative-ai`               |
-| **Model (Text)**  | `gemini-2.0-flash-exp`                |
-| **Model (Voice)** | `gemini-3-pro-preview`                |
+| **SDK**           | `@google/genai`                       |
+| **Model (Text)**  | `gemini-2.5-flash-preview-04-17`      |
+| **Model (Voice)** | `gemini-2.5-flash-preview-tts`        |
 | **Auth**          | `GEMINI_API_KEY` environment variable |
 | **Method**        | Streaming via `sendMessageStream()`   |
 
 > **Note**: Vertex AI Gemini models (`gemini-1.5-flash`, `gemini-pro`) are not accessible in this GCP project. Using Google AI API instead.
 
-### Voice TTS: Google Cloud Text-to-Speech
+### Voice TTS: Gemini Native TTS
 
 | Setting    | Value                                           |
 | ---------- | ----------------------------------------------- |
-| **SDK**    | `@google-cloud/text-to-speech`                  |
-| **Voice**  | `en-US-Chirp3-HD-Zephyr` (Bright, professional) |
-| **Format** | MP3, streamed in chunks                         |
-| **Method** | Sentence-by-sentence streaming for low latency  |
+| **SDK**    | `@google/genai` (native Gemini TTS)             |
+| **Model**  | `gemini-2.5-flash-preview-tts`                  |
+| **Voice**  | `Orbit` (calm, professional - configurable)     |
+| **Format** | WAV, streamed after text generation             |
+| **Method** | Two-step: File Search → Text → Audio            |
+
+> **Available Voices**: Puck, Charon, Kore, Fenrir, Aoede, Orbit, Sulafat, Gacrux, Pulcherrima, Leda, Orus, Zephyr
+> 
+> **Note**: Gemini TTS is used for natural-sounding speech. File Search is called first for document retrieval, then audio is generated from the response text.
 
 ### Embeddings: Vertex AI
 
@@ -469,7 +474,7 @@ All limits are configurable via environment variables. These protect against run
 
 - [x] Real-time voice chat (WebSocket)
 - [x] Browser speech recognition
-- [x] Streaming TTS (Google Chirp3 HD Zephyr voice)
+- [x] Native Gemini TTS (Orbit voice, natural-sounding)
 - [x] Progressive audio playback (~1-2s latency)
 - [x] Voice-optimized prompts (concise, no markdown)
 

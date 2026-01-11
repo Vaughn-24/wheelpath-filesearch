@@ -7,19 +7,57 @@ import { TenantService } from '../tenant/tenant.service';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * VoiceService - Voice agent using File Search API
+ * Available Gemini TTS Voices
+ * See: https://ai.google.dev/gemini-api/docs/speech-generation
+ */
+export const GEMINI_VOICES = {
+  // Bright, upbeat voices
+  PUCK: 'Puck',
+  CHARON: 'Charon',
+  KORE: 'Kore',
+  FENRIR: 'Fenrir',
+  AOEDE: 'Aoede',
+  
+  // Calm, professional voices (recommended for WheelPath)
+  ORBIT: 'Orbit',      // Neutral, clear
+  SULAFAT: 'Sulafat',  // Warm, approachable
+  GACRUX: 'Gacrux',    // Professional, confident
+  PULCHERRIMA: 'Pulcherrima', // Calm, reassuring
+  
+  // Expressive voices
+  LEDA: 'Leda',
+  ORUS: 'Orus',
+  ZEPHYR: 'Zephyr',
+} as const;
+
+// Default voice for WheelPath - calm, professional
+const DEFAULT_VOICE = process.env.GEMINI_VOICE || GEMINI_VOICES.ORBIT;
+
+// Model that supports native TTS
+const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
+
+/**
+ * VoiceService - Voice agent using Gemini File Search + Native TTS
  *
- * This service is SEPARATE from RagService to ensure:
- * 1. No interference with existing chat functionality
- * 2. Voice-optimized prompt construction (concise, no citations)
- * 3. Independent scaling and error handling
+ * This service uses Gemini's native TTS capabilities for natural-sounding speech.
+ * It maintains compatibility with File Search for document retrieval.
+ * 
+ * Architecture:
+ * 1. First call: Generate text response with File Search (for RAG)
+ * 2. Second call: Generate audio from text with Gemini TTS
+ * 
+ * This two-step approach ensures File Search works (text-only) while
+ * still using Gemini's superior TTS for audio generation.
  */
 @Injectable()
 export class VoiceService {
   private ai: GoogleGenAI | null = null;
 
-  // Model for voice (uses File Search)
-  private readonly MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+  // Model for text generation with File Search
+  private readonly TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-04-17';
+  
+  // Voice for TTS
+  private readonly VOICE = DEFAULT_VOICE;
 
   constructor(
     private readonly metricsService: MetricsService,
@@ -28,7 +66,7 @@ export class VoiceService {
     const apiKey = process.env.GEMINI_API_KEY;
     if (apiKey) {
       this.ai = new GoogleGenAI({ apiKey });
-      console.log(`VoiceService: Initialized with File Search (model: ${this.MODEL})`);
+      console.log(`VoiceService: Initialized with Gemini TTS (voice: ${this.VOICE})`);
     } else {
       console.warn('VoiceService: GEMINI_API_KEY not set');
     }
@@ -115,12 +153,11 @@ NOTE: The user hasn't uploaded project documents yet.
   }
 
   /**
-   * Process a voice query and return a text response
-   * This is used for Speech-to-Text -> LLM -> Text-to-Speech flow
+   * Generate text response using File Search
+   * This is step 1 of the two-step voice process
    */
-  async processVoiceQuery(
+  async generateTextWithFileSearch(
     tenantId: string,
-    documentId: string,
     transcribedText: string,
   ): Promise<string> {
     if (!this.ai) {
@@ -134,7 +171,7 @@ NOTE: The user hasn't uploaded project documents yet.
     // Build voice-optimized prompt
     const systemInstruction = this.buildVoiceSystemPrompt(hasDocuments);
 
-    // Prepare config
+    // Prepare config for text generation with File Search
     const config: any = {
       systemInstruction,
       generationConfig: {
@@ -155,43 +192,115 @@ NOTE: The user hasn't uploaded project documents yet.
 
     try {
       const response = await this.ai.models.generateContent({
-        model: this.MODEL,
+        model: this.TEXT_MODEL,
         contents: [{ role: 'user', parts: [{ text: transcribedText }] }],
         config,
       });
 
-      const text = response.candidates?.[0]?.content?.parts?.[0]?.text || 'I could not process that. Please try again.';
-
-      // Track metrics (non-blocking)
-      this.metricsService
-        .track({
-          type: 'voice_query',
-          tenantId,
-          documentId: documentId === 'all' ? undefined : documentId,
-          metadata: {
-            queryLength: transcribedText.length,
-            responseLength: text.length,
-          },
-        })
-        .catch((err: Error) => console.warn('Voice metrics failed:', err.message));
+      const text = response.candidates?.[0]?.content?.parts?.[0]?.text || 
+        'I could not process that. Please try again.';
 
       return text;
     } catch (error: any) {
-      console.error('VoiceService: Generation failed:', error.message);
+      console.error('VoiceService: Text generation failed:', error.message);
       return 'I ran into a temporary issue. Please try again in a moment.';
     }
   }
 
   /**
-   * Stream voice response for lower perceived latency
+   * Generate audio from text using Gemini's native TTS
+   * This is step 2 of the two-step voice process
+   * 
+   * @returns Base64-encoded WAV audio or null on failure
+   */
+  async generateAudioFromText(text: string): Promise<{ audio: string; mimeType: string } | null> {
+    if (!this.ai) {
+      return null;
+    }
+
+    try {
+      const response = await this.ai.models.generateContent({
+        model: TTS_MODEL,
+        contents: [{ 
+          role: 'user', 
+          parts: [{ text }] 
+        }],
+        config: {
+          responseModalities: ['AUDIO'],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: {
+                voiceName: this.VOICE,
+              },
+            },
+          },
+        },
+      });
+
+      // Extract audio from response
+      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
+      
+      if (audioData?.data && audioData?.mimeType) {
+        return {
+          audio: audioData.data,
+          mimeType: audioData.mimeType,
+        };
+      }
+
+      console.warn('VoiceService: No audio data in response');
+      return null;
+    } catch (error: any) {
+      console.error('VoiceService: Audio generation failed:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Process a complete voice query: File Search → Text → Audio
+   * Returns both text and audio for the response
+   */
+  async processVoiceQuery(
+    tenantId: string,
+    documentId: string,
+    transcribedText: string,
+  ): Promise<{ text: string; audio: string | null; mimeType: string | null }> {
+    // Step 1: Generate text with File Search
+    const text = await this.generateTextWithFileSearch(tenantId, transcribedText);
+
+    // Track metrics (non-blocking)
+    this.metricsService
+      .track({
+        type: 'voice_query',
+        tenantId,
+        documentId: documentId === 'all' ? undefined : documentId,
+        metadata: {
+          queryLength: transcribedText.length,
+          responseLength: text.length,
+        },
+      })
+      .catch((err: Error) => console.warn('Voice metrics failed:', err.message));
+
+    // Step 2: Generate audio from text
+    const audioResult = await this.generateAudioFromText(text);
+
+    return {
+      text,
+      audio: audioResult?.audio || null,
+      mimeType: audioResult?.mimeType || null,
+    };
+  }
+
+  /**
+   * Stream text response for lower perceived latency
+   * Audio is generated after text streaming completes
    */
   async *streamVoiceResponse(
     tenantId: string,
-    _documentId: string, // Unused but kept for API compatibility
+    _documentId: string,
     transcribedText: string,
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<{ type: 'text' | 'audio'; data: string; mimeType?: string }> {
     if (!this.ai) {
-      yield 'Voice service is being configured.';
+      yield { type: 'text', data: 'Voice service is being configured.' };
       return;
     }
 
@@ -218,9 +327,12 @@ NOTE: The user hasn't uploaded project documents yet.
       ];
     }
 
+    let fullText = '';
+
     try {
+      // Step 1: Stream text with File Search
       const response = await this.ai.models.generateContentStream({
-        model: this.MODEL,
+        model: this.TEXT_MODEL,
         contents: [{ role: 'user', parts: [{ text: transcribedText }] }],
         config,
       });
@@ -228,12 +340,32 @@ NOTE: The user hasn't uploaded project documents yet.
       for await (const chunk of response) {
         const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
-          yield text;
+          fullText += text;
+          yield { type: 'text', data: text };
+        }
+      }
+
+      // Step 2: Generate audio from complete text
+      if (fullText) {
+        const audioResult = await this.generateAudioFromText(fullText);
+        if (audioResult) {
+          yield { 
+            type: 'audio', 
+            data: audioResult.audio,
+            mimeType: audioResult.mimeType,
+          };
         }
       }
     } catch (error: any) {
       console.error('VoiceService: Stream failed:', error.message);
-      yield 'I ran into a temporary issue. Please try again.';
+      yield { type: 'text', data: 'I ran into a temporary issue. Please try again.' };
     }
+  }
+
+  /**
+   * Get the current voice name
+   */
+  getVoiceName(): string {
+    return this.VOICE;
   }
 }

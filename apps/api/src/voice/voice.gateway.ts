@@ -1,4 +1,3 @@
-import { TextToSpeechClient } from '@google-cloud/text-to-speech';
 import {
   WebSocketGateway,
   WebSocketServer,
@@ -32,10 +31,10 @@ const COST_LIMITS = {
   QUERY_COOLDOWN_MS: parseInt(process.env.VOICE_QUERY_COOLDOWN_MS || '2000'), // 2 seconds between queries
   QUERY_TIMEOUT_MS: parseInt(process.env.VOICE_QUERY_TIMEOUT_MS || '30000'), // 30 second max query time
 
-  // TTS cost controls
-  MAX_RESPONSE_CHARS: parseInt(process.env.VOICE_MAX_RESPONSE_CHARS || '2000'), // ~$0.032 max per response
-  USE_BROWSER_TTS_THRESHOLD: parseInt(process.env.VOICE_BROWSER_TTS_THRESHOLD || '100'), // Use browser TTS for short responses
-  MAX_TTS_CALLS_PER_HOUR: parseInt(process.env.VOICE_MAX_TTS_PER_HOUR || '100'),
+  // Response limits
+  MAX_RESPONSE_CHARS: parseInt(process.env.VOICE_MAX_RESPONSE_CHARS || '2000'),
+  USE_BROWSER_TTS_THRESHOLD: parseInt(process.env.VOICE_BROWSER_TTS_THRESHOLD || '50'), // Fallback to browser TTS for very short
+  MAX_QUERIES_PER_HOUR: parseInt(process.env.VOICE_MAX_QUERIES_PER_HOUR || '100'),
 };
 
 interface VoiceSession {
@@ -48,8 +47,8 @@ interface VoiceSession {
   queryCount: number;
   queryCountResetAt: number;
   lastQueryAt: number;
-  ttsCallsThisHour: number;
-  ttsCallsResetAt: number;
+  queriesThisHour: number;
+  queriesHourResetAt: number;
   idleTimeoutRef?: NodeJS.Timeout;
   sessionTimeoutRef?: NodeJS.Timeout;
   heartbeatRef?: NodeJS.Timeout;
@@ -59,13 +58,16 @@ interface VoiceSession {
 /**
  * VoiceGateway - WebSocket handler for real-time voice communication
  *
+ * Uses Gemini's native TTS for natural-sounding speech generation.
+ * Maintains File Search compatibility for document-grounded responses.
+ *
  * COST PROTECTIONS IMPLEMENTED:
  * 1. Idle timeout - disconnects after 5 min of inactivity
  * 2. Max session duration - hard limit of 30 min
  * 3. Query rate limiting - max 10 queries/minute
  * 4. Query cooldown - 2 seconds between queries
  * 5. Query timeout - 30 second max processing time
- * 6. TTS cost controls - max response length, hourly limits
+ * 6. Hourly query limits per tenant
  * 7. Concurrent session limits per tenant
  * 8. Heartbeat for dead connection detection
  */
@@ -74,17 +76,22 @@ interface VoiceSession {
   cors: {
     origin: [
       'https://wheelpath-web-945257727887.us-central1.run.app',
+      'https://wheelpath-web-l2phyyl55q-uc.a.run.app',
+      /https:\/\/wheelpath-web-.*\.run\.app$/,
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',
+      'https://wheelpath-landing.pages.dev',
       /https:\/\/.*\.wheelpath2-ai\.pages\.dev$/,
+      /https:\/\/.*\.wheelpath-landing\.pages\.dev$/,
       'https://dev.wheelpath.ai',
       'https://wheelpath.ai',
+      'https://www.wheelpath.ai',
       'http://localhost:3000',
       'http://localhost:3002',
     ],
     credentials: true,
   },
-  pingInterval: 25000, // Socket.io built-in ping
+  pingInterval: 25000,
   pingTimeout: 10000,
 })
 export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
@@ -93,13 +100,12 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private sessions = new Map<string, VoiceSession>();
   private tenantSessionCounts = new Map<string, number>();
-  private ttsClient: TextToSpeechClient;
 
   constructor(private readonly voiceService: VoiceService) {
-    this.ttsClient = new TextToSpeechClient();
-
     // Periodic cleanup of stale sessions (every 5 minutes)
     setInterval(() => this.cleanupStaleSessions(), 300000);
+    
+    console.log(`VoiceGateway: Initialized with Gemini TTS (voice: ${this.voiceService.getVoiceName()})`);
   }
 
   /**
@@ -175,6 +181,20 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
       session.queryCountResetAt = now;
     }
 
+    // Reset hourly count
+    if (now - session.queriesHourResetAt > 3600000) {
+      session.queriesThisHour = 0;
+      session.queriesHourResetAt = now;
+    }
+
+    // Check hourly limit
+    if (session.queriesThisHour >= COST_LIMITS.MAX_QUERIES_PER_HOUR) {
+      return {
+        allowed: false,
+        reason: `Hourly limit reached. Max ${COST_LIMITS.MAX_QUERIES_PER_HOUR} queries per hour.`,
+      };
+    }
+
     // Check queries per minute
     if (session.queryCount >= COST_LIMITS.MAX_QUERIES_PER_MINUTE) {
       return {
@@ -195,78 +215,6 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
     }
 
     return { allowed: true };
-  }
-
-  /**
-   * Check if TTS is allowed (hourly limit)
-   */
-  private checkTTSLimit(session: VoiceSession): boolean {
-    const now = Date.now();
-
-    // Reset hourly count
-    if (now - session.ttsCallsResetAt > 3600000) {
-      session.ttsCallsThisHour = 0;
-      session.ttsCallsResetAt = now;
-    }
-
-    return session.ttsCallsThisHour < COST_LIMITS.MAX_TTS_CALLS_PER_HOUR;
-  }
-
-  /**
-   * Convert text to speech with cost controls
-   * Returns null if limits exceeded or text too short (use browser TTS)
-   */
-  private async textToSpeechChunk(
-    text: string,
-    session: VoiceSession,
-  ): Promise<{ audio: Buffer | null; useBrowserTTS: boolean }> {
-    if (!text.trim()) return { audio: null, useBrowserTTS: false };
-
-    // For very short responses, suggest browser TTS to save costs
-    if (text.length < COST_LIMITS.USE_BROWSER_TTS_THRESHOLD) {
-      return { audio: null, useBrowserTTS: true };
-    }
-
-    // Check hourly TTS limit
-    if (!this.checkTTSLimit(session)) {
-      console.log(`TTS hourly limit reached for tenant ${session.tenantId}`);
-      return { audio: null, useBrowserTTS: true };
-    }
-
-    try {
-      const [response] = await this.ttsClient.synthesizeSpeech({
-        input: { text },
-        voice: {
-          languageCode: 'en-US',
-          name: 'en-US-Chirp3-HD-Zephyr',
-        },
-        audioConfig: {
-          audioEncoding: 'MP3',
-          speakingRate: 1.0,
-          pitch: 0,
-          effectsProfileId: ['headphone-class-device'],
-        },
-      });
-
-      session.ttsCallsThisHour++;
-
-      if (response.audioContent) {
-        return { audio: Buffer.from(response.audioContent as Uint8Array), useBrowserTTS: false };
-      }
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      console.error('TTS chunk failed:', message);
-    }
-
-    return { audio: null, useBrowserTTS: true };
-  }
-
-  /**
-   * Split text into speakable sentences/phrases
-   */
-  private splitIntoSentences(text: string): string[] {
-    const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [];
-    return sentences.map((s) => s.trim()).filter((s) => s.length > 0);
   }
 
   async handleConnection(client: Socket) {
@@ -308,8 +256,8 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         queryCount: 0,
         queryCountResetAt: now,
         lastQueryAt: 0,
-        ttsCallsThisHour: 0,
-        ttsCallsResetAt: now,
+        queriesThisHour: 0,
+        queriesHourResetAt: now,
       };
 
       this.sessions.set(client.id, session);
@@ -335,6 +283,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
       client.emit('authenticated', {
         tenantId,
+        voiceName: this.voiceService.getVoiceName(),
         limits: {
           maxQueriesPerMinute: COST_LIMITS.MAX_QUERIES_PER_MINUTE,
           queryCooldownMs: COST_LIMITS.QUERY_COOLDOWN_MS,
@@ -414,6 +363,7 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
     // Update rate limiting counters
     session.queryCount++;
+    session.queriesThisHour++;
     session.lastQueryAt = Date.now();
     session.isActive = true;
 
@@ -434,89 +384,49 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         data.text,
       );
 
-      let fullResponse = '';
-      let sentenceBuffer = '';
-      let audioChunkIndex = 0;
+      let fullText = '';
       let totalChars = 0;
 
       for await (const chunk of stream) {
         if (!session.isActive) break;
 
-        // Enforce max response length
-        totalChars += chunk.length;
-        if (totalChars > COST_LIMITS.MAX_RESPONSE_CHARS) {
-          const truncatedChunk = chunk.slice(
-            0,
-            COST_LIMITS.MAX_RESPONSE_CHARS - (totalChars - chunk.length),
-          );
-          fullResponse += truncatedChunk;
-          sentenceBuffer += truncatedChunk;
-          client.emit('voiceChunk', { text: truncatedChunk, truncated: true });
-          break;
-        }
-
-        fullResponse += chunk;
-        sentenceBuffer += chunk;
-        client.emit('voiceChunk', { text: chunk });
-
-        const sentences = this.splitIntoSentences(sentenceBuffer);
-
-        if (
-          sentences.length > 1 ||
-          (sentences.length === 1 && /[.!?]$/.test(sentenceBuffer.trim()))
-        ) {
-          const lastSentence = sentences[sentences.length - 1];
-          const isLastComplete = /[.!?]$/.test(lastSentence.trim());
-
-          const sentencesToSpeak = isLastComplete ? sentences : sentences.slice(0, -1);
-          sentenceBuffer = isLastComplete ? '' : lastSentence;
-
-          for (const sentence of sentencesToSpeak) {
-            if (!session.isActive) break;
-
-            const { audio, useBrowserTTS } = await this.textToSpeechChunk(sentence, session);
-            if (audio) {
-              client.emit('voiceAudioChunk', {
-                audio: audio.toString('base64'),
-                format: 'mp3',
-                index: audioChunkIndex++,
-                text: sentence,
-              });
-            } else if (useBrowserTTS) {
-              // Tell client to use browser TTS for this chunk
-              client.emit('voiceBrowserTTS', {
-                text: sentence,
-                index: audioChunkIndex++,
-              });
-            }
+        if (chunk.type === 'text') {
+          // Enforce max response length
+          totalChars += chunk.data.length;
+          if (totalChars > COST_LIMITS.MAX_RESPONSE_CHARS) {
+            const truncatedText = chunk.data.slice(
+              0,
+              COST_LIMITS.MAX_RESPONSE_CHARS - (totalChars - chunk.data.length),
+            );
+            fullText += truncatedText;
+            client.emit('voiceChunk', { text: truncatedText, truncated: true });
+            break;
           }
+
+          fullText += chunk.data;
+          client.emit('voiceChunk', { text: chunk.data });
+        } else if (chunk.type === 'audio' && session.isActive) {
+          // Send the Gemini-generated audio
+          client.emit('voiceAudio', {
+            audio: chunk.data,
+            mimeType: chunk.mimeType,
+            format: this.mimeTypeToFormat(chunk.mimeType),
+            fullText,
+          });
         }
       }
 
-      // Speak remaining buffer
-      if (session.isActive && sentenceBuffer.trim()) {
-        const { audio, useBrowserTTS } = await this.textToSpeechChunk(sentenceBuffer, session);
-        if (audio) {
-          client.emit('voiceAudioChunk', {
-            audio: audio.toString('base64'),
-            format: 'mp3',
-            index: audioChunkIndex++,
-            text: sentenceBuffer,
-            isFinal: true,
-          });
-        } else if (useBrowserTTS) {
-          client.emit('voiceBrowserTTS', {
-            text: sentenceBuffer,
-            index: audioChunkIndex++,
-            isFinal: true,
-          });
-        }
+      // If no audio was generated (fallback to browser TTS for very short responses)
+      if (session.isActive && fullText.length < COST_LIMITS.USE_BROWSER_TTS_THRESHOLD) {
+        client.emit('voiceBrowserTTS', {
+          text: fullText,
+          reason: 'Response too short for audio generation',
+        });
       }
 
       if (session.isActive) {
         client.emit('voiceEnd', {
-          fullText: fullResponse,
-          audioChunks: audioChunkIndex,
+          fullText,
           truncated: totalChars > COST_LIMITS.MAX_RESPONSE_CHARS,
         });
       }
@@ -531,6 +441,19 @@ export class VoiceGateway implements OnGatewayConnection, OnGatewayDisconnect {
         session.queryTimeoutRef = undefined;
       }
     }
+  }
+
+  /**
+   * Convert MIME type to simple format string for frontend
+   */
+  private mimeTypeToFormat(mimeType: string | undefined): string {
+    if (!mimeType) return 'wav';
+    if (mimeType.includes('wav')) return 'wav';
+    if (mimeType.includes('mp3')) return 'mp3';
+    if (mimeType.includes('ogg')) return 'ogg';
+    if (mimeType.includes('webm')) return 'webm';
+    if (mimeType.includes('pcm')) return 'pcm';
+    return 'wav'; // Default
   }
 
   @SubscribeMessage('voiceCancel')

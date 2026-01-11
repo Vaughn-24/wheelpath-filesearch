@@ -20,10 +20,13 @@ async function bootstrap() {
       // Cloudflare Pages URLs
       'https://wheelpath2-ai.pages.dev',
       'https://wheelpath-ai.pages.dev',
+      'https://wheelpath-landing.pages.dev',
       /https:\/\/.*\.wheelpath2-ai\.pages\.dev$/, // Preview deployments
+      /https:\/\/.*\.wheelpath-landing\.pages\.dev$/, // Preview deployments
       // Custom domains
       'https://dev.wheelpath.ai',
       'https://wheelpath.ai',
+      'https://www.wheelpath.ai',
       // Local development
       'http://localhost:3000',
     ],

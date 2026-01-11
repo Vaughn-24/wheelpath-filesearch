@@ -167,23 +167,24 @@ export default function VoiceOverlay({
           }
         });
 
-        socket.on('voiceBrowserTTS', (data: { text: string; index: number; isFinal?: boolean }) => {
+        socket.on('voiceBrowserTTS', (data: { text: string; reason?: string }) => {
+          // Fallback to browser TTS when Gemini audio is not available
           speakWithBrowserTTS(data.text);
         });
 
-        socket.on('voiceAudio', (data: { audio: string; format: string; fullText: string }) => {
+        socket.on('voiceAudio', (data: { audio: string; mimeType?: string; format: string; fullText: string }) => {
           setState('speaking');
-          playAudioFromBase64(data.audio, data.format);
+          // Use mimeType if available, otherwise fall back to format
+          const audioFormat = data.mimeType || `audio/${data.format}`;
+          playAudioFromBase64(data.audio, audioFormat);
         });
 
         socket.on(
           'voiceEnd',
-          (data: { fullText: string; audioChunks?: number; truncated?: boolean }) => {
+          (data: { fullText: string; truncated?: boolean }) => {
             resetIdleTimers();
-            if (!data.audioChunks || data.audioChunks === 0) {
-              setState('speaking');
-              speakWithBrowserTTS(data.fullText);
-            }
+            // Audio is already playing or browser TTS was triggered
+            // Just mark the end of the response
           },
         );
 
@@ -358,7 +359,7 @@ export default function VoiceOverlay({
 
     try {
       const audioBlob = new Blob([Uint8Array.from(atob(chunk.audio), (c) => c.charCodeAt(0))], {
-        type: 'audio/mp3',
+        type: chunk.format === 'ogg' ? 'audio/ogg' : 'audio/mp3',
       });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
@@ -387,15 +388,22 @@ export default function VoiceOverlay({
     }
   }, [state]);
 
-  const playAudioFromBase64 = useCallback((base64Audio: string, format: string) => {
+  const playAudioFromBase64 = useCallback((base64Audio: string, mimeTypeOrFormat: string) => {
     try {
       if (currentAudioRef.current) {
         currentAudioRef.current.pause();
         currentAudioRef.current = null;
       }
 
+      // Determine the MIME type - handle both full MIME types and simple format strings
+      let mimeType = mimeTypeOrFormat;
+      if (!mimeTypeOrFormat.includes('/')) {
+        // Simple format like 'wav', 'mp3', 'ogg'
+        mimeType = `audio/${mimeTypeOrFormat}`;
+      }
+
       const audioBlob = new Blob([Uint8Array.from(atob(base64Audio), (c) => c.charCodeAt(0))], {
-        type: `audio/${format}`,
+        type: mimeType,
       });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
@@ -406,15 +414,19 @@ export default function VoiceOverlay({
         currentAudioRef.current = null;
       };
 
-      audio.onerror = () => {
-        console.error('Audio playback failed');
+      audio.onerror = (e) => {
+        console.error('Audio playback failed:', e);
+        // Fallback: if audio fails, try browser TTS with the response text
         setState('idle');
         URL.revokeObjectURL(audioUrl);
         currentAudioRef.current = null;
       };
 
       currentAudioRef.current = audio;
-      audio.play();
+      audio.play().catch((err) => {
+        console.error('Audio play failed:', err);
+        setState('idle');
+      });
     } catch (err) {
       console.error('Failed to play audio:', err);
       setState('idle');

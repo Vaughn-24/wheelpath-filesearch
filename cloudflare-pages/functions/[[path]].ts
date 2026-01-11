@@ -3,6 +3,13 @@ const CLOUD_RUN_URL = 'https://wheelpath-web-l2phyyl55q-uc.a.run.app';
 
 export async function onRequest(context: { request: Request; params: { path: string[] } }) {
   const url = new URL(context.request.url);
+  
+  // Redirect www.wheelpath.ai to wheelpath.ai for consistency
+  if (url.hostname === 'www.wheelpath.ai') {
+    const redirectUrl = new URL(url.pathname + url.search, 'https://wheelpath.ai');
+    return Response.redirect(redirectUrl.toString(), 301);
+  }
+  
   const targetUrl = new URL(url.pathname + url.search, CLOUD_RUN_URL);
   
   // Create headers without host
