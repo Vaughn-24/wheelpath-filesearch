@@ -1,6 +1,32 @@
+# This file specifies files that are *not* uploaded to Google Cloud Build
+# using gcloud builds submit.
+
+# Ignore git directory
 .git
-.next
-node_modules
-dist
-coverage
-.DS_Store
+.gitignore
+
+# Ignore node_modules
+node_modules/
+**/node_modules/
+
+# Ignore dist folders (will be built in container)
+dist/
+**/dist/
+
+# Ignore TypeScript build info files
+*.tsbuildinfo
+
+# Ignore test files
+*.spec.ts
+*.test.ts
+**/test/
+
+# Ignore local config
+.env
+.env.*
+
+# Ignore IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
