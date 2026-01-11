@@ -2,7 +2,15 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "baseUrl": ".",
-    "outDir": "dist"
+    "outDir": "dist",
+    "paths": {
+      "@wheelpath/schemas": ["../../packages/schemas/dist"],
+      "@wheelpath/schemas/*": ["../../packages/schemas/dist/*"],
+      "@wheelpath/types": ["../../packages/types/dist"],
+      "@wheelpath/types/*": ["../../packages/types/dist/*"],
+      "@wheelpath/validation": ["../../packages/validation/dist"],
+      "@wheelpath/validation/*": ["../../packages/validation/dist/*"]
+    }
   },
   "include": ["src", "test"]
 }
