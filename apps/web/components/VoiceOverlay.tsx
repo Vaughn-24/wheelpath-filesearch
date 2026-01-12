@@ -13,9 +13,12 @@ type VoiceState =
 
 interface AudioChunk {
   audio: string;
-  index: number;
-  text: string;
+  index?: number;
+  text?: string;
   isFinal?: boolean;
+  format?: string;
+  mimeType?: string;
+  fullText?: string;
 }
 
 interface SessionLimits {
@@ -358,8 +361,10 @@ export default function VoiceOverlay({
     const chunk = audioQueueRef.current.shift()!;
 
     try {
+      // Use mimeType if available, otherwise infer from format
+      const mimeType = chunk.mimeType || (chunk.format === 'ogg' ? 'audio/ogg' : 'audio/wav');
       const audioBlob = new Blob([Uint8Array.from(atob(chunk.audio), (c) => c.charCodeAt(0))], {
-        type: chunk.format === 'ogg' ? 'audio/ogg' : 'audio/mp3',
+        type: mimeType,
       });
       const audioUrl = URL.createObjectURL(audioBlob);
       const audio = new Audio(audioUrl);
