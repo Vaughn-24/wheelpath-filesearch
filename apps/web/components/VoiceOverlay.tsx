@@ -172,21 +172,21 @@ export default function VoiceOverlay({
           speakWithBrowserTTS(data.text);
         });
 
-        socket.on('voiceAudio', (data: { audio: string; mimeType?: string; format: string; fullText: string }) => {
-          setState('speaking');
-          // Use mimeType if available, otherwise fall back to format
-          const audioFormat = data.mimeType || `audio/${data.format}`;
-          playAudioFromBase64(data.audio, audioFormat);
-        });
-
         socket.on(
-          'voiceEnd',
-          (data: { fullText: string; truncated?: boolean }) => {
-            resetIdleTimers();
-            // Audio is already playing or browser TTS was triggered
-            // Just mark the end of the response
+          'voiceAudio',
+          (data: { audio: string; mimeType?: string; format: string; fullText: string }) => {
+            setState('speaking');
+            // Use mimeType if available, otherwise fall back to format
+            const audioFormat = data.mimeType || `audio/${data.format}`;
+            playAudioFromBase64(data.audio, audioFormat);
           },
         );
+
+        socket.on('voiceEnd', (_data: { fullText: string; truncated?: boolean }) => {
+          resetIdleTimers();
+          // Audio is already playing or browser TTS was triggered
+          // Just mark the end of the response
+        });
 
         socket.on('voiceError', (data: { message: string }) => {
           setError(data.message);
