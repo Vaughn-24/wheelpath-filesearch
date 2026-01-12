@@ -14,3 +14,4 @@ coverage/
 wheelpath-ai/
 wheelpath-ai/
 *.tsbuildinfo
+firebase-debug.log
