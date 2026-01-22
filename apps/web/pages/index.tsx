@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import ChatContainer from '../components/ChatContainer';
 import DocumentList from '../components/DocumentList';
 import DocumentUploader from '../components/DocumentUploader';
+import PilotProgramModal from '../components/PilotProgramModal';
 import { useAuth } from '../lib/auth';
 
 interface ChatSession {
@@ -14,15 +15,21 @@ interface ChatSession {
 }
 
 export default function Home() {
-  const { user, loading, signInWithGoogle, isDemo } = useAuth();
+  const { user, loading, isDemo } = useAuth();
   const [selectedDoc, setSelectedDoc] = useState<(Document & { signedUrl?: string }) | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0); // Used to reset ChatContainer
+  const [showPilotModal, setShowPilotModal] = useState(false);
+
+  // Handler for sign-in button clicks - shows pilot program modal
+  const handleSignInClick = useCallback(() => {
+    setShowPilotModal(true);
+  }, []);
 
   const handleSelect = async (doc: Document) => {
     if (!user) {
-      signInWithGoogle();
+      handleSignInClick();
       return;
     }
     setSelectedDoc({ ...doc });
@@ -84,6 +91,9 @@ export default function Home() {
 
   return (
     <>
+      {/* Pilot Program Modal */}
+      <PilotProgramModal isOpen={showPilotModal} onClose={() => setShowPilotModal(false)} />
+
       {/* ============================================ */}
       {/* MOBILE LAYOUT (stacked) */}
       {/* ============================================ */}
@@ -117,7 +127,7 @@ export default function Home() {
                   {user.email ? user.email[0].toUpperCase() : 'A'}
                 </div>
               ) : (
-                <button onClick={signInWithGoogle} className="btn-primary text-body-sm py-sm">
+                <button onClick={handleSignInClick} className="btn-primary text-body-sm py-sm">
                   Sign in
                 </button>
               )}
@@ -261,7 +271,7 @@ export default function Home() {
           {!user && !loading && (
             <div className="p-lg border-t border-border">
               <button
-                onClick={signInWithGoogle}
+                onClick={handleSignInClick}
                 className="w-full btn-primary flex items-center justify-center gap-sm"
               >
                 Sign in with Google
@@ -289,7 +299,7 @@ export default function Home() {
                 </svg>
               </button>
               {!user && !loading && (
-                <button onClick={signInWithGoogle} className="btn-primary text-body-sm">
+                <button onClick={handleSignInClick} className="btn-primary text-body-sm">
                   Sign in with Google
                 </button>
               )}
