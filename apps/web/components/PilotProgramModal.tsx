@@ -15,24 +15,6 @@ interface FormData {
   interest: string;
 }
 
-// Google Form configuration
-// To get these entry IDs:
-// 1. Open your Google Form in edit mode
-// 2. Click the 3 dots menu → Get pre-filled link
-// 3. Fill in sample data and click "Get link"
-// 4. The URL will contain entry.XXXXXXXXX=value for each field
-// 5. Replace the entry IDs below with your actual entry IDs
-const GOOGLE_FORM_CONFIG = {
-  formId: '1FAIpQLSfXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX', // Replace with your form ID
-  entryIds: {
-    name: 'entry.XXXXXXXXX', // Replace with actual entry ID for Name field
-    email: 'entry.XXXXXXXXX', // Replace with actual entry ID for Email field
-    company: 'entry.XXXXXXXXX', // Replace with actual entry ID for Company field
-    role: 'entry.XXXXXXXXX', // Replace with actual entry ID for Role field
-    interest: 'entry.XXXXXXXXX', // Replace with actual entry ID for Interest field
-  },
-};
-
 export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModalProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const [formState, setFormState] = useState<FormState>('form');
@@ -43,6 +25,7 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
     role: '',
     interest: '',
   });
+  const [errorMessage, setErrorMessage] = useState<string>('');
 
   // Reset form when modal closes
   useEffect(() => {
@@ -51,6 +34,7 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
       const timer = setTimeout(() => {
         setFormState('form');
         setFormData({ name: '', email: '', company: '', role: '', interest: '' });
+        setErrorMessage('');
       }, 300);
       return () => clearTimeout(timer);
     }
@@ -78,7 +62,9 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
     if (e.target === e.currentTarget) onClose();
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
+  const handleInputChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
+  ) => {
     const { name, value } = e.target;
     setFormData((prev) => ({ ...prev, [name]: value }));
   };
@@ -86,32 +72,34 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormState('submitting');
+    setErrorMessage('');
 
     try {
-      // Build form data for Google Forms submission
-      const googleFormData = new FormData();
-      googleFormData.append(GOOGLE_FORM_CONFIG.entryIds.name, formData.name);
-      googleFormData.append(GOOGLE_FORM_CONFIG.entryIds.email, formData.email);
-      googleFormData.append(GOOGLE_FORM_CONFIG.entryIds.company, formData.company);
-      googleFormData.append(GOOGLE_FORM_CONFIG.entryIds.role, formData.role);
-      googleFormData.append(GOOGLE_FORM_CONFIG.entryIds.interest, formData.interest);
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
 
-      // Submit to Google Forms using no-cors mode (fire and forget)
-      // Google Forms doesn't support CORS, so we can't get a response
-      // but the submission will still go through
-      await fetch(
-        `https://docs.google.com/forms/d/e/${GOOGLE_FORM_CONFIG.formId}/formResponse`,
-        {
-          method: 'POST',
-          mode: 'no-cors',
-          body: googleFormData,
-        }
-      );
+      const response = await fetch(`${apiUrl}/pilot/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          company: formData.company,
+          role: formData.role,
+          interest: formData.interest || undefined,
+        }),
+      });
 
-      // Since we can't verify the response due to CORS, assume success
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.message || `Server error: ${response.status}`);
+      }
+
       setFormState('success');
     } catch (error) {
       console.error('Form submission error:', error);
+      setErrorMessage(error instanceof Error ? error.message : 'Something went wrong');
       setFormState('error');
     }
   };
@@ -147,7 +135,13 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
             {/* Success Icon */}
             <div className="flex justify-center mb-lg">
               <div className="w-20 h-20 rounded-full bg-success/10 flex items-center justify-center">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" className="text-success">
+                <svg
+                  width="40"
+                  height="40"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="text-success"
+                >
                   <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
                 </svg>
               </div>
@@ -158,15 +152,19 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
             </h2>
 
             <p className="text-foreground-muted text-body mb-lg leading-relaxed">
-              Thank you for joining the WheelPath pilot program, <span className="font-medium text-foreground">{formData.name}</span>! 
-              We&apos;ll reach out to <span className="font-medium text-foreground">{formData.email}</span> soon with next steps.
+              Thank you for joining the WheelPath pilot program,{' '}
+              <span className="font-medium text-foreground">{formData.name.split(' ')[0]}</span>!
+              We&apos;ll reach out to{' '}
+              <span className="font-medium text-foreground">{formData.email}</span> soon with next
+              steps.
             </p>
 
             <div className="bg-terracotta-light rounded-md p-lg mb-xl">
               <p className="text-foreground text-body-sm">
                 <span className="font-semibold">What happens next?</span>
                 <br />
-                Our team will review your application and contact you within 48 hours to schedule an onboarding call.
+                Our team will review your application and contact you within 48 hours to schedule an
+                onboarding call.
               </p>
             </div>
 
@@ -182,7 +180,13 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
             {/* Error Icon */}
             <div className="flex justify-center mb-lg">
               <div className="w-20 h-20 rounded-full bg-error/10 flex items-center justify-center">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="currentColor" className="text-error">
+                <svg
+                  width="40"
+                  height="40"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="text-error"
+                >
                   <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
                 </svg>
               </div>
@@ -192,10 +196,11 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
               Something went wrong
             </h2>
 
-            <p className="text-foreground-muted text-body mb-xl leading-relaxed">
-              We couldn&apos;t submit your application. Please try again or contact us directly at{' '}
-              <a href="mailto:pilot@wheelpath.ai" className="text-terracotta hover:underline">
-                pilot@wheelpath.ai
+            <p className="text-foreground-muted text-body mb-lg leading-relaxed">
+              {errorMessage || "We couldn't submit your application."} Please try again or contact
+              us directly at{' '}
+              <a href="mailto:devaughn@wheelpath.ai" className="text-terracotta hover:underline">
+                devaughn@wheelpath.ai
               </a>
             </p>
 
@@ -203,14 +208,6 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
               <button onClick={() => setFormState('form')} className="btn-secondary">
                 Try Again
               </button>
-              <a
-                href="https://forms.gle/xEzrQJDmKhdPYbmr5"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn-primary"
-              >
-                Use Google Form
-              </a>
             </div>
           </div>
         )}
@@ -251,7 +248,10 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
             <form onSubmit={handleSubmit} className="space-y-lg">
               {/* Name */}
               <div>
-                <label htmlFor="name" className="block text-body-sm font-medium text-foreground mb-xs">
+                <label
+                  htmlFor="name"
+                  className="block text-body-sm font-medium text-foreground mb-xs"
+                >
                   Full Name <span className="text-terracotta">*</span>
                 </label>
                 <input
@@ -269,7 +269,10 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
 
               {/* Email */}
               <div>
-                <label htmlFor="email" className="block text-body-sm font-medium text-foreground mb-xs">
+                <label
+                  htmlFor="email"
+                  className="block text-body-sm font-medium text-foreground mb-xs"
+                >
                   Work Email <span className="text-terracotta">*</span>
                 </label>
                 <input
@@ -287,7 +290,10 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
 
               {/* Company */}
               <div>
-                <label htmlFor="company" className="block text-body-sm font-medium text-foreground mb-xs">
+                <label
+                  htmlFor="company"
+                  className="block text-body-sm font-medium text-foreground mb-xs"
+                >
                   Company <span className="text-terracotta">*</span>
                 </label>
                 <input
@@ -305,7 +311,10 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
 
               {/* Role */}
               <div>
-                <label htmlFor="role" className="block text-body-sm font-medium text-foreground mb-xs">
+                <label
+                  htmlFor="role"
+                  className="block text-body-sm font-medium text-foreground mb-xs"
+                >
                   Your Role <span className="text-terracotta">*</span>
                 </label>
                 <select
@@ -329,7 +338,10 @@ export default function PilotProgramModal({ isOpen, onClose }: PilotProgramModal
 
               {/* Interest / Message */}
               <div>
-                <label htmlFor="interest" className="block text-body-sm font-medium text-foreground mb-xs">
+                <label
+                  htmlFor="interest"
+                  className="block text-body-sm font-medium text-foreground mb-xs"
+                >
                   What interests you most about WheelPath?
                 </label>
                 <textarea
