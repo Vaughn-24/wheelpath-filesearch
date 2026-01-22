@@ -37,6 +37,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<User | null>(isDemoMode ? DEMO_USER : null);
   const [loading, setLoading] = useState(!isDemoMode);
   const [error, setError] = useState<string | null>(null);
+  const [hasExplicitlyLoggedOut, setHasExplicitlyLoggedOut] = useState(false);
 
   const signInWithGoogle = async () => {
     if (isDemoMode || !auth) {
@@ -61,18 +62,21 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const signOut = async () => {
     if (isDemoMode || !auth) {
+      setHasExplicitlyLoggedOut(true);
       setUser(null);
       console.log('Demo mode: User signed out');
       return;
     }
 
     try {
+      setHasExplicitlyLoggedOut(true); // Prevent auto-anonymous-signin
       await firebaseSignOut(auth as Auth);
       setUser(null);
       setError(null);
       console.log('User signed out successfully');
     } catch (err: unknown) {
       console.error('Sign-out failed:', err);
+      setHasExplicitlyLoggedOut(false); // Reset on failure
       const errorMessage = err instanceof Error ? err.message : 'Sign-out failed';
       setError(errorMessage);
     }
@@ -91,6 +95,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
         setLoading(false);
         setError(null);
       } else {
+        // Don't auto-signin if user explicitly logged out
+        if (hasExplicitlyLoggedOut) {
+          console.log('User explicitly logged out, skipping anonymous sign-in');
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+
         try {
           console.log('No user, attempting anonymous sign-in...');
           await signInAnonymously(auth as Auth);
@@ -103,7 +115,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [hasExplicitlyLoggedOut]);
 
   const value: AuthContextType = {
     user,

@@ -30,10 +30,19 @@ export default function LogoutOverlay({
         setPhase('exiting');
       }, 2500);
 
-      // After exit animation, redirect
+      // After exit animation, clear storage and redirect
       const redirectTimer = setTimeout(() => {
         setPhase('hidden');
         onComplete();
+
+        // Clear browser storage to ensure clean logout
+        try {
+          localStorage.clear();
+          sessionStorage.clear();
+        } catch (e) {
+          console.warn('Failed to clear storage:', e);
+        }
+
         window.location.href = redirectUrl;
       }, 3200);
 
