@@ -181,6 +181,22 @@
   }
 }
 
+/* Landing Page Hero Styles */
+@layer components {
+  .landing-hero {
+    background: linear-gradient(180deg, #1E1A14 0%, #2C2419 50%, #3D3225 100%);
+  }
+  
+  .landing-hero::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at 50% 0%, rgba(212, 160, 48, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse at 80% 100%, rgba(194, 112, 62, 0.06) 0%, transparent 50%);
+    pointer-events: none;
+  }
+}
+
 /* Voice Mode Styles */
 @layer components {
   .voice-overlay {

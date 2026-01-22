@@ -313,7 +313,7 @@ export default function Landing() {
   }
 
   return (
-    <div className="min-h-screen font-sans text-voice-text overflow-x-hidden">
+    <div className="relative min-h-screen font-sans text-voice-text overflow-x-hidden landing-hero">
       {/* ===== HERO SECTION ===== */}
       <section
         ref={heroRef}
