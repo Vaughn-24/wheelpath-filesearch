@@ -36,7 +36,20 @@ interface AuthProviderProps {
 // Check if user explicitly logged out (persists across page loads)
 const getStoredLogoutState = (): boolean => {
   if (typeof window === 'undefined') return false;
-  return localStorage.getItem('wheelpath_logged_out') === 'true';
+  // Check localStorage first
+  if (localStorage.getItem('wheelpath_logged_out') === 'true') return true;
+  // Also check URL parameter (for cross-domain redirects)
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get('logged_out') === 'true') {
+    // Store it locally and clean up URL
+    localStorage.setItem('wheelpath_logged_out', 'true');
+    // Clean up URL without reload
+    const newUrl = new URL(window.location.href);
+    newUrl.searchParams.delete('logged_out');
+    window.history.replaceState({}, '', newUrl.toString());
+    return true;
+  }
+  return false;
 };
 
 const setStoredLogoutState = (value: boolean) => {

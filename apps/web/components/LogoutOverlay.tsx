@@ -36,20 +36,17 @@ export default function LogoutOverlay({
         onComplete();
 
         // Clear browser storage to ensure clean logout
-        // But preserve the logout flag so the landing page knows not to auto-login
         try {
-          const logoutFlag = localStorage.getItem('wheelpath_logged_out');
           localStorage.clear();
           sessionStorage.clear();
-          // Restore logout flag so landing page respects it
-          if (logoutFlag) {
-            localStorage.setItem('wheelpath_logged_out', logoutFlag);
-          }
         } catch (e) {
           console.warn('Failed to clear storage:', e);
         }
 
-        window.location.href = redirectUrl;
+        // Add logged_out parameter to URL for cross-domain redirect
+        const targetUrl = new URL(redirectUrl);
+        targetUrl.searchParams.set('logged_out', 'true');
+        window.location.href = targetUrl.toString();
       }, 3200);
 
       return () => {
