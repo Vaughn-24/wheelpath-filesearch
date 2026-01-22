@@ -1,4 +1,4 @@
-import { User, signInAnonymously, GoogleAuthProvider, signInWithPopup, Auth } from 'firebase/auth';
+import { User, signInAnonymously, GoogleAuthProvider, signInWithPopup, signOut as firebaseSignOut, Auth } from 'firebase/auth';
 import { useEffect, useState, createContext, useContext, ReactNode } from 'react';
 
 import { auth, isDemoMode } from './firebase';
@@ -16,6 +16,7 @@ interface AuthContextType {
   loading: boolean;
   error: string | null;
   signInWithGoogle: () => Promise<void>;
+  signOut: () => Promise<void>;
   isDemo: boolean;
 }
 
@@ -24,6 +25,7 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   error: null,
   signInWithGoogle: async () => {},
+  signOut: async () => {},
   isDemo: false,
 });
 
@@ -54,6 +56,25 @@ export function AuthProvider({ children }: AuthProviderProps) {
       setError(errorMessage);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const signOut = async () => {
+    if (isDemoMode || !auth) {
+      setUser(null);
+      console.log('Demo mode: User signed out');
+      return;
+    }
+
+    try {
+      await firebaseSignOut(auth as Auth);
+      setUser(null);
+      setError(null);
+      console.log('User signed out successfully');
+    } catch (err: unknown) {
+      console.error('Sign-out failed:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Sign-out failed';
+      setError(errorMessage);
     }
   };
 
@@ -89,6 +110,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     loading,
     error,
     signInWithGoogle,
+    signOut,
     isDemo: isDemoMode,
   };
 

@@ -5,6 +5,7 @@ import ChatContainer from '../components/ChatContainer';
 import DocumentList from '../components/DocumentList';
 import DocumentUploader from '../components/DocumentUploader';
 import PilotProgramModal from '../components/PilotProgramModal';
+import UserMenu from '../components/UserMenu';
 import { useAuth } from '../lib/auth';
 
 interface ChatSession {
@@ -15,7 +16,7 @@ interface ChatSession {
 }
 
 export default function Home() {
-  const { user, loading, isDemo } = useAuth();
+  const { user, loading, isDemo, signOut } = useAuth();
   const [selectedDoc, setSelectedDoc] = useState<(Document & { signedUrl?: string }) | null>(null);
   const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -123,9 +124,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-sm">
               {user ? (
-                <div className="h-10 w-10 rounded-full bg-terracotta flex items-center justify-center text-white font-medium">
-                  {user.email ? user.email[0].toUpperCase() : 'A'}
-                </div>
+                <UserMenu user={user} onSignOut={signOut} size="md" />
               ) : (
                 <button onClick={handleSignInClick} className="btn-primary text-body-sm py-sm">
                   Sign in
@@ -172,11 +171,7 @@ export default function Home() {
           <div className="p-xl border-b border-border">
             <div className="flex items-center justify-between mb-lg">
               <h1 className="text-heading-lg font-semibold text-foreground">WheelPath</h1>
-              {user && (
-                <div className="h-8 w-8 rounded-full bg-terracotta flex items-center justify-center text-white text-body-sm font-medium">
-                  {user.email ? user.email[0].toUpperCase() : 'A'}
-                </div>
-              )}
+              {user && <UserMenu user={user} onSignOut={signOut} size="sm" />}
             </div>
             <p className="text-foreground-muted text-body-sm">
               Engineering intelligence, grounded in your documents.
