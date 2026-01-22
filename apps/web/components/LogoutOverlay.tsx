@@ -36,9 +36,15 @@ export default function LogoutOverlay({
         onComplete();
 
         // Clear browser storage to ensure clean logout
+        // But preserve the logout flag so the landing page knows not to auto-login
         try {
+          const logoutFlag = localStorage.getItem('wheelpath_logged_out');
           localStorage.clear();
           sessionStorage.clear();
+          // Restore logout flag so landing page respects it
+          if (logoutFlag) {
+            localStorage.setItem('wheelpath_logged_out', logoutFlag);
+          }
         } catch (e) {
           console.warn('Failed to clear storage:', e);
         }

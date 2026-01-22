@@ -33,13 +33,37 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
+// Check if user explicitly logged out (persists across page loads)
+const getStoredLogoutState = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return localStorage.getItem('wheelpath_logged_out') === 'true';
+};
+
+const setStoredLogoutState = (value: boolean) => {
+  if (typeof window === 'undefined') return;
+  if (value) {
+    localStorage.setItem('wheelpath_logged_out', 'true');
+  } else {
+    localStorage.removeItem('wheelpath_logged_out');
+  }
+};
+
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<User | null>(isDemoMode ? DEMO_USER : null);
-  const [loading, setLoading] = useState(!isDemoMode);
+  // Check stored logout state to prevent demo user auto-login after redirect
+  const wasLoggedOut = typeof window !== 'undefined' && getStoredLogoutState();
+  
+  const [user, setUser] = useState<User | null>(
+    isDemoMode && !wasLoggedOut ? DEMO_USER : null
+  );
+  const [loading, setLoading] = useState(!isDemoMode && !wasLoggedOut);
   const [error, setError] = useState<string | null>(null);
-  const [hasExplicitlyLoggedOut, setHasExplicitlyLoggedOut] = useState(false);
+  const [hasExplicitlyLoggedOut, setHasExplicitlyLoggedOut] = useState(wasLoggedOut);
 
   const signInWithGoogle = async () => {
+    // Clear logout state when user explicitly signs in
+    setHasExplicitlyLoggedOut(false);
+    setStoredLogoutState(false);
+    
     if (isDemoMode || !auth) {
       setUser(DEMO_USER);
       setLoading(false);
@@ -63,6 +87,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
   const signOut = async () => {
     if (isDemoMode || !auth) {
       setHasExplicitlyLoggedOut(true);
+      setStoredLogoutState(true); // Persist across page loads
       setUser(null);
       console.log('Demo mode: User signed out');
       return;
@@ -70,6 +95,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
     try {
       setHasExplicitlyLoggedOut(true); // Prevent auto-anonymous-signin
+      setStoredLogoutState(true); // Persist across page loads
       await firebaseSignOut(auth as Auth);
       setUser(null);
       setError(null);
@@ -77,6 +103,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     } catch (err: unknown) {
       console.error('Sign-out failed:', err);
       setHasExplicitlyLoggedOut(false); // Reset on failure
+      setStoredLogoutState(false);
       const errorMessage = err instanceof Error ? err.message : 'Sign-out failed';
       setError(errorMessage);
     }
