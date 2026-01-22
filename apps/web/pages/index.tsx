@@ -4,6 +4,7 @@ import { useState, useCallback } from 'react';
 import ChatContainer from '../components/ChatContainer';
 import DocumentList from '../components/DocumentList';
 import DocumentUploader from '../components/DocumentUploader';
+import LogoutOverlay from '../components/LogoutOverlay';
 import PilotProgramModal from '../components/PilotProgramModal';
 import UserMenu from '../components/UserMenu';
 import { useAuth } from '../lib/auth';
@@ -22,11 +23,22 @@ export default function Home() {
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
   const [chatKey, setChatKey] = useState(0); // Used to reset ChatContainer
   const [showPilotModal, setShowPilotModal] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutUserName, setLogoutUserName] = useState<string | undefined>();
 
   // Handler for sign-in button clicks - shows pilot program modal
   const handleSignInClick = useCallback(() => {
     setShowPilotModal(true);
   }, []);
+
+  // Handler for logout - shows thank you overlay then redirects
+  const handleLogout = useCallback(() => {
+    // Capture user name before signing out
+    setLogoutUserName(user?.displayName || user?.email?.split('@')[0] || undefined);
+    setIsLoggingOut(true);
+    // Actually sign out
+    signOut();
+  }, [user, signOut]);
 
   const handleSelect = async (doc: Document) => {
     if (!user) {
@@ -95,6 +107,14 @@ export default function Home() {
       {/* Pilot Program Modal */}
       <PilotProgramModal isOpen={showPilotModal} onClose={() => setShowPilotModal(false)} />
 
+      {/* Logout Overlay */}
+      <LogoutOverlay
+        isVisible={isLoggingOut}
+        userName={logoutUserName}
+        onComplete={() => setIsLoggingOut(false)}
+        redirectUrl="https://wheelpath.ai"
+      />
+
       {/* ============================================ */}
       {/* MOBILE LAYOUT (stacked) */}
       {/* ============================================ */}
@@ -124,7 +144,7 @@ export default function Home() {
             </div>
             <div className="flex items-center gap-sm">
               {user ? (
-                <UserMenu user={user} onSignOut={signOut} size="md" />
+                <UserMenu user={user} onSignOut={handleLogout} size="md" />
               ) : (
                 <button onClick={handleSignInClick} className="btn-primary text-body-sm py-sm">
                   Sign in
@@ -171,7 +191,7 @@ export default function Home() {
           <div className="p-xl border-b border-border">
             <div className="flex items-center justify-between mb-lg">
               <h1 className="text-heading-lg font-semibold text-foreground">WheelPath</h1>
-              {user && <UserMenu user={user} onSignOut={signOut} size="sm" />}
+              {user && <UserMenu user={user} onSignOut={handleLogout} size="sm" />}
             </div>
             <p className="text-foreground-muted text-body-sm">
               Engineering intelligence, grounded in your documents.
