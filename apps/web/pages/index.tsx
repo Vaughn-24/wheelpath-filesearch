@@ -469,6 +469,7 @@ export default function Landing() {
                 className="transition-transform duration-500 ease-out"
                 style={{
                   transformOrigin: '85% 35%',
+                  marginTop: '4px',
                   transform: navClicked 
                     ? 'rotate(180deg) scale(0.9)' 
                     : navHovered 
@@ -629,6 +630,7 @@ export default function Landing() {
                   className="transition-transform duration-500 ease-out"
                   style={{
                     transformOrigin: '85% 35%',
+                    marginTop: '5px',
                     transform: heroClicked
                       ? 'rotate(180deg) scale(0.9)'
                       : heroHovered
@@ -1534,6 +1536,7 @@ export default function Landing() {
                   className="transition-transform duration-500 ease-out"
                   style={{
                     transformOrigin: '85% 35%',
+                    marginTop: '4px',
                     transform: actionClicked ? 'rotate(180deg) scale(0.9)' : actionHovered ? 'rotate(45deg)' : 'rotate(0deg)',
                   }}
                 >
@@ -1667,6 +1670,7 @@ export default function Landing() {
                 className="transition-transform duration-500 ease-out"
                 style={{
                   transformOrigin: '85% 35%',
+                  marginTop: '5px',
                   transform: ctaClicked
                     ? 'rotate(180deg) scale(0.9)'
                     : ctaHovered
