@@ -469,7 +469,7 @@ export default function Landing() {
                 className="transition-transform duration-500 ease-out"
                 style={{
                   transformOrigin: '85% 35%',
-                  marginTop: '4px',
+                  marginTop: '7px',
                   transform: navClicked 
                     ? 'rotate(180deg) scale(0.9)' 
                     : navHovered 
@@ -630,7 +630,7 @@ export default function Landing() {
                   className="transition-transform duration-500 ease-out"
                   style={{
                     transformOrigin: '85% 35%',
-                    marginTop: '5px',
+                    marginTop: '9px',
                     transform: heroClicked
                       ? 'rotate(180deg) scale(0.9)'
                       : heroHovered
@@ -950,7 +950,7 @@ export default function Landing() {
                     <line x1="16" y1="13" x2="8" y2="13" />
                     <line x1="16" y1="17" x2="8" y2="17" />
                     <polyline points="10,9 9,9 8,9" />
-                  </svg>
+                </svg>
                 </div>
                 <h3 className="text-heading font-semibold text-foreground mb-sm">
                   Document Intelligence
@@ -959,7 +959,7 @@ export default function Landing() {
                   Upload RFIs, submittals, specs, and drawings. Our AI indexes everything and
                   understands construction context.
                 </p>
-              </div>
+            </div>
 
               {/* Feature 2 */}
               <div className="bento-card group hover:shadow-lg">
@@ -1003,14 +1003,14 @@ export default function Landing() {
                   <svg
                     width="28"
                     height="28"
-                    viewBox="0 0 24 24"
+                        viewBox="0 0 24 24"
                     fill="none"
                     stroke="#C2703E"
                     strokeWidth="2"
-                  >
+                      >
                     <path d="M9 11l3 3L22 4" />
                     <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
-                        </svg>
+                      </svg>
                 </div>
                 <h3 className="text-heading font-semibold text-foreground mb-sm">
                   Grounded Answers
@@ -1045,7 +1045,7 @@ export default function Landing() {
             strokeWidth="1"
           >
             <polygon points="50,5 95,27.5 95,72.5 50,95 5,72.5 5,27.5" />
-          </svg>
+                        </svg>
         </div>
         <div
           className="absolute opacity-5"
@@ -1536,7 +1536,7 @@ export default function Landing() {
                   className="transition-transform duration-500 ease-out"
                   style={{
                     transformOrigin: '85% 35%',
-                    marginTop: '4px',
+                    marginTop: '8px',
                     transform: actionClicked ? 'rotate(180deg) scale(0.9)' : actionHovered ? 'rotate(45deg)' : 'rotate(0deg)',
                   }}
                 >
@@ -1670,7 +1670,7 @@ export default function Landing() {
                 className="transition-transform duration-500 ease-out"
                 style={{
                   transformOrigin: '85% 35%',
-                  marginTop: '5px',
+                  marginTop: '9px',
                   transform: ctaClicked
                     ? 'rotate(180deg) scale(0.9)'
                     : ctaHovered
