@@ -468,6 +468,7 @@ export default function Landing() {
                 strokeWidth="2"
                 className="transition-transform duration-500 ease-out"
                 style={{
+                  transformOrigin: '85% 35%',
                   transform: navClicked 
                     ? 'rotate(180deg) scale(0.9)' 
                     : navHovered 
@@ -627,6 +628,7 @@ export default function Landing() {
                   strokeWidth="2"
                   className="transition-transform duration-500 ease-out"
                   style={{
+                    transformOrigin: '85% 35%',
                     transform: heroClicked
                       ? 'rotate(180deg) scale(0.9)'
                       : heroHovered
@@ -1531,6 +1533,7 @@ export default function Landing() {
                   strokeLinejoin="round"
                   className="transition-transform duration-500 ease-out"
                   style={{
+                    transformOrigin: '85% 35%',
                     transform: actionClicked ? 'rotate(180deg) scale(0.9)' : actionHovered ? 'rotate(45deg)' : 'rotate(0deg)',
                   }}
                 >
@@ -1663,6 +1666,7 @@ export default function Landing() {
                 strokeWidth="2"
                 className="transition-transform duration-500 ease-out"
                 style={{
+                  transformOrigin: '85% 35%',
                   transform: ctaClicked
                     ? 'rotate(180deg) scale(0.9)'
                     : ctaHovered
