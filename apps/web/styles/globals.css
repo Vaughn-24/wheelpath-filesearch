@@ -314,19 +314,13 @@
   }
 }
 
-/* Wrench ratchet animation - overshoots then clicks into place */
+/* Wrench ratchet animation - smooth rotation with subtle settle */
 @keyframes wrenchRatchet {
   0% {
     transform: rotate(45deg) scale(1);
   }
-  40% {
-    transform: rotate(135deg) scale(0.95);
-  }
-  60% {
-    transform: rotate(115deg) scale(0.92);
-  }
-  80% {
-    transform: rotate(125deg) scale(0.9);
+  70% {
+    transform: rotate(128deg) scale(0.92);
   }
   100% {
     transform: rotate(120deg) scale(0.9);
@@ -334,5 +328,5 @@
 }
 
 .animate-wrench-ratchet {
-  animation: wrenchRatchet 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  animation: wrenchRatchet 0.5s cubic-bezier(0.22, 1, 0.36, 1) forwards;
 }
