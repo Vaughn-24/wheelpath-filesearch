@@ -3,35 +3,40 @@ import { GoogleGenAI } from '@google/genai';
 
 import { MetricsService } from '../metrics/metrics.service';
 import { TenantService } from '../tenant/tenant.service';
+import { PILOT_TRADES } from '../common/constants';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
- * Available Gemini TTS Voices
+ * Available Gemini TTS Voices (must be lowercase)
  * See: https://ai.google.dev/gemini-api/docs/speech-generation
+ * Valid voices: achernar, achird, algenib, algieba, alnilam, aoede, autonoe, 
+ * callirrhoe, charon, despina, enceladus, erinome, fenrir, gacrux, iapetus, 
+ * kore, laomedeia, leda, orus, puck, pulcherrima, rasalgethi, sadachbia, 
+ * sadaltager, schedar, sulafat, umbriel, vindemiatrix, zephyr, zubenelgenubi
  */
 export const GEMINI_VOICES = {
   // Bright, upbeat voices
-  PUCK: 'Puck',
-  CHARON: 'Charon',
-  KORE: 'Kore',
-  FENRIR: 'Fenrir',
-  AOEDE: 'Aoede',
+  PUCK: 'puck',
+  CHARON: 'charon',
+  KORE: 'kore',
+  FENRIR: 'fenrir',
+  AOEDE: 'aoede',
   
   // Calm, professional voices (recommended for WheelPath)
-  ORBIT: 'Orbit',      // Neutral, clear
-  SULAFAT: 'Sulafat',  // Warm, approachable
-  GACRUX: 'Gacrux',    // Professional, confident
-  PULCHERRIMA: 'Pulcherrima', // Calm, reassuring
+  SULAFAT: 'sulafat',  // Warm, approachable
+  GACRUX: 'gacrux',    // Professional, confident
+  PULCHERRIMA: 'pulcherrima', // Calm, reassuring
+  ENCELADUS: 'enceladus', // Clear
   
   // Expressive voices
-  LEDA: 'Leda',
-  ORUS: 'Orus',
-  ZEPHYR: 'Zephyr',
+  LEDA: 'leda',
+  ORUS: 'orus',
+  ZEPHYR: 'zephyr',
 } as const;
 
 // Default voice for WheelPath - calm, professional
-const DEFAULT_VOICE = process.env.GEMINI_VOICE || GEMINI_VOICES.ORBIT;
+const DEFAULT_VOICE = process.env.GEMINI_VOICE || GEMINI_VOICES.SULAFAT;
 
 // Model that supports native TTS
 const TTS_MODEL = 'gemini-2.5-flash-preview-tts';
@@ -54,7 +59,7 @@ export class VoiceService {
   private ai: GoogleGenAI | null = null;
 
   // Model for text generation with File Search
-  private readonly TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-preview-04-17';
+  private readonly TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
   
   // Voice for TTS
   private readonly VOICE = DEFAULT_VOICE;
@@ -109,6 +114,18 @@ Data → Meaning → Action
 1. State the facts from the data
 2. Explain what it means
 3. Give a clear next step
+
+AMBIGUITY HANDLING:
+If the retrieved documents are ambiguous, do NOT guess. Ask a specific clarifying question.
+
+IMPLICATIONS ANALYSIS (VOICE OPTIMIZED):
+You are the "Virtual General Superintendent." You must analyze the retrieved facts for specific implications to these Pilot Trades:
+${PILOT_TRADES.map((t) => `- ${t}`).join('\n')}
+
+If you find a fact that impacts one of these trades, you MUST mention it.
+However, for voice, you must be CONCISE. Do not list every single detail.
+Pick the top 1-2 most critical implications and explain them naturally.
+Example: "Here are the facts... Now, this change in slab thickness means your Concrete team needs to adjust their pour volume, and your Plumbers need to check their sleeve heights before the pour."
 
 COMMON PHRASES TO USE:
 - "Here's what the data shows."
@@ -241,6 +258,18 @@ NOTE: The user hasn't uploaded project documents yet.
       const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData;
       
       if (audioData?.data && audioData?.mimeType) {
+        console.log(`VoiceService: Generated audio with mimeType: ${audioData.mimeType}, size: ${audioData.data.length} bytes`);
+        
+        // If the format is raw PCM (audio/L16), we need to wrap it in WAV
+        if (audioData.mimeType.includes('L16') || audioData.mimeType.includes('pcm')) {
+          console.log('VoiceService: Converting raw PCM to WAV');
+          const wavData = this.pcmToWav(audioData.data);
+          return {
+            audio: wavData,
+            mimeType: 'audio/wav',
+          };
+        }
+        
         return {
           audio: audioData.data,
           mimeType: audioData.mimeType,
@@ -291,14 +320,14 @@ NOTE: The user hasn't uploaded project documents yet.
   }
 
   /**
-   * Stream text response for lower perceived latency
-   * Audio is generated after text streaming completes
+   * Stream text response with sentence-by-sentence audio generation
+   * Audio is generated for each sentence as it completes, reducing latency
    */
   async *streamVoiceResponse(
     tenantId: string,
     _documentId: string,
     transcribedText: string,
-  ): AsyncGenerator<{ type: 'text' | 'audio'; data: string; mimeType?: string }> {
+  ): AsyncGenerator<{ type: 'text' | 'audio'; data: string; mimeType?: string; index?: number }> {
     if (!this.ai) {
       yield { type: 'text', data: 'Voice service is being configured.' };
       return;
@@ -328,6 +357,28 @@ NOTE: The user hasn't uploaded project documents yet.
     }
 
     let fullText = '';
+    let pendingSentence = '';
+    let sentenceIndex = 0;
+    const audioPromises: Promise<{ index: number; audio: string; mimeType: string } | null>[] = [];
+
+    // Helper to detect sentence boundaries
+    const extractCompleteSentences = (text: string): { sentences: string[]; remainder: string } => {
+      // Match sentences ending with . ! ? followed by space or end of string
+      const sentencePattern = /[^.!?]*[.!?]+(?:\s|$)/g;
+      const sentences: string[] = [];
+      let lastIndex = 0;
+      let match;
+      
+      while ((match = sentencePattern.exec(text)) !== null) {
+        sentences.push(match[0].trim());
+        lastIndex = sentencePattern.lastIndex;
+      }
+      
+      return {
+        sentences,
+        remainder: text.slice(lastIndex),
+      };
+    };
 
     try {
       // Step 1: Stream text with File Search
@@ -341,18 +392,71 @@ NOTE: The user hasn't uploaded project documents yet.
         const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text;
         if (text) {
           fullText += text;
+          pendingSentence += text;
           yield { type: 'text', data: text };
+          
+          // Check for complete sentences
+          const { sentences, remainder } = extractCompleteSentences(pendingSentence);
+          
+          for (const sentence of sentences) {
+            if (sentence.length > 5) { // Skip very short fragments
+              const currentIndex = sentenceIndex++;
+              console.log(`VoiceService: Generating audio for sentence ${currentIndex}: "${sentence.slice(0, 50)}..."`);
+              
+              // Start audio generation for this sentence (non-blocking)
+              const audioPromise = this.generateAudioFromText(sentence)
+                .then(result => result ? { index: currentIndex, audio: result.audio, mimeType: result.mimeType } : null)
+                .catch(err => {
+                  console.warn(`VoiceService: Audio generation failed for sentence ${currentIndex}:`, err.message);
+                  return null;
+                });
+              
+              audioPromises.push(audioPromise);
+            }
+          }
+          
+          pendingSentence = remainder;
         }
       }
 
-      // Step 2: Generate audio from complete text
-      if (fullText) {
-        const audioResult = await this.generateAudioFromText(fullText);
-        if (audioResult) {
+      // Handle any remaining text as the final sentence
+      if (pendingSentence.trim().length > 5) {
+        const currentIndex = sentenceIndex++;
+        console.log(`VoiceService: Generating audio for final sentence ${currentIndex}: "${pendingSentence.slice(0, 50)}..."`);
+        
+        const audioPromise = this.generateAudioFromText(pendingSentence.trim())
+          .then(result => result ? { index: currentIndex, audio: result.audio, mimeType: result.mimeType } : null)
+          .catch(err => {
+            console.warn(`VoiceService: Audio generation failed for final sentence:`, err.message);
+            return null;
+          });
+        
+        audioPromises.push(audioPromise);
+      }
+
+      // Yield audio chunks as they complete
+      // Use a race-based approach to yield as soon as each one finishes
+      const remainingPromises = [...audioPromises];
+      const totalChunks = remainingPromises.length;
+      
+      console.log(`VoiceService: Waiting for ${totalChunks} audio chunks`);
+      
+      while (remainingPromises.length > 0) {
+        // Race to get the first completed promise
+        const result = await Promise.race(
+          remainingPromises.map((p, i) => p.then(r => ({ result: r, index: i })))
+        );
+        
+        // Remove the completed promise from the array
+        remainingPromises.splice(result.index, 1);
+        
+        if (result.result) {
+          console.log(`VoiceService: Audio chunk ${result.result.index} ready (${remainingPromises.length} remaining)`);
           yield { 
             type: 'audio', 
-            data: audioResult.audio,
-            mimeType: audioResult.mimeType,
+            data: result.result.audio,
+            mimeType: result.result.mimeType,
+            index: result.result.index,
           };
         }
       }
@@ -363,9 +467,82 @@ NOTE: The user hasn't uploaded project documents yet.
   }
 
   /**
+   * Convert raw PCM (16-bit, 24kHz) to WAV format
+   * Gemini TTS returns audio/L16;rate=24000 which needs WAV headers for browser playback
+   */
+  private pcmToWav(base64Pcm: string): string {
+    // Decode base64 to bytes
+    const pcmBuffer = Buffer.from(base64Pcm, 'base64');
+    
+    // WAV header parameters (assuming 16-bit mono @ 24kHz from Gemini TTS)
+    const sampleRate = 24000;
+    const numChannels = 1;
+    const bitsPerSample = 16;
+    const byteRate = sampleRate * numChannels * (bitsPerSample / 8);
+    const blockAlign = numChannels * (bitsPerSample / 8);
+    const dataSize = pcmBuffer.length;
+    const headerSize = 44;
+    const fileSize = headerSize + dataSize - 8;
+    
+    // Create WAV header
+    const header = Buffer.alloc(headerSize);
+    
+    // RIFF chunk
+    header.write('RIFF', 0);
+    header.writeUInt32LE(fileSize, 4);
+    header.write('WAVE', 8);
+    
+    // fmt sub-chunk
+    header.write('fmt ', 12);
+    header.writeUInt32LE(16, 16); // fmt chunk size
+    header.writeUInt16LE(1, 20); // audio format (PCM = 1)
+    header.writeUInt16LE(numChannels, 22);
+    header.writeUInt32LE(sampleRate, 24);
+    header.writeUInt32LE(byteRate, 28);
+    header.writeUInt16LE(blockAlign, 32);
+    header.writeUInt16LE(bitsPerSample, 34);
+    
+    // data sub-chunk
+    header.write('data', 36);
+    header.writeUInt32LE(dataSize, 40);
+    
+    // Combine header and PCM data
+    const wavBuffer = Buffer.concat([header, pcmBuffer]);
+    
+    return wavBuffer.toString('base64');
+  }
+
+  /**
    * Get the current voice name
    */
   getVoiceName(): string {
     return this.VOICE;
+  }
+
+  /**
+   * Generate a succinct greeting for new voice sessions
+   * Returns audio greeting using Gemini TTS
+   */
+  async generateGreeting(): Promise<{ text: string; audio: string | null; mimeType: string | null }> {
+    // Succinct, casual greetings that feel natural
+    const greetings = [
+      "Hey there. What can I help you with?",
+      "Hi. Any questions for me?",
+      "Hey. What would you like to know?",
+      "Hi there. What's on your mind?",
+      "Hey. How can I help?",
+    ];
+
+    // Pick a random greeting
+    const text = greetings[Math.floor(Math.random() * greetings.length)];
+
+    // Generate audio from the greeting
+    const audioResult = await this.generateAudioFromText(text);
+
+    return {
+      text,
+      audio: audioResult?.audio || null,
+      mimeType: audioResult?.mimeType || null,
+    };
   }
 }

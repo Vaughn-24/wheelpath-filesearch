@@ -4,6 +4,7 @@ import { Message } from '@wheelpath/schemas';
 
 import { MetricsService } from '../metrics/metrics.service';
 import { TenantService } from '../tenant/tenant.service';
+import { PILOT_TRADES } from '../common/constants';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -262,6 +263,25 @@ Data → Meaning → Action
 1. State the facts from the documents
 2. Explain what it means for the user
 3. Give a clear next step if relevant
+
+AMBIGUITY HANDLING:
+If the retrieved documents are ambiguous (e.g., an RFI mentions 'the wall' but doesn't specify which one), do NOT guess. Instead, ask the user a specific clarifying question to narrow down the context.
+
+IMPLICATIONS ANALYSIS (CRITICAL):
+You are the "Virtual General Superintendent." For every query, you must analyze the retrieved facts for specific implications to the following Pilot Trades:
+${PILOT_TRADES.map((t) => `- ${t}`).join('\n')}
+
+If you find a fact that impacts one of these trades (e.g., a dimension change affecting Concrete volume, or a wall move affecting Plumbing rough-in), you MUST explicitly state it in a dedicated "Implications" section.
+
+Structure your response as follows:
+### The Facts
+*   [Fact 1 from documents]
+*   [Fact 2 from documents]
+
+### The Implications
+*   **[Trade Name]:** [Specific impact on cost, schedule, or coordination]
+*   **[Trade Name]:** [Specific impact]
+(Only include trades with actual implications. If none, omit this section.)
 
 CITATION RULES:
 - The system automatically retrieves relevant document content
